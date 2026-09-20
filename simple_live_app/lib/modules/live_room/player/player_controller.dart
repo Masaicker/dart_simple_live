@@ -1585,6 +1585,9 @@ mixin PlayerGestureControlMixin
     cancelVerticalDrag();
     showMouseCursor();
     resetHideMouseCursorTimer();
+    if (Platform.isWindows) {
+      return;
+    }
     if (lockControlsState.value && fullScreenState.value) {
       return;
     }
@@ -1599,7 +1602,7 @@ mixin PlayerGestureControlMixin
     }
     final localX = details.localPosition.dx;
     final localY = details.localPosition.dy;
-    if (Platform.isWindows || Platform.isLinux) {
+    if (Platform.isLinux) {
       final sideGestureWidth = width * 0.28;
       if (localX > sideGestureWidth && localX < width - sideGestureWidth) {
         return;
@@ -1632,7 +1635,7 @@ mixin PlayerGestureControlMixin
     double? initialVolume;
     var initialBrightness = 1.0;
     var volumeReadSucceeded = true;
-    if (Platform.isWindows || Platform.isLinux) {
+    if (Platform.isLinux) {
       final currentPlayerVolume = player.state.volume;
       if (currentPlayerVolume > 0) {
         initialVolume = currentPlayerVolume.clamp(0.0, 100.0) / 100;
@@ -1652,7 +1655,6 @@ mixin PlayerGestureControlMixin
     if (Platform.isAndroid ||
         Platform.isIOS ||
         Platform.isMacOS ||
-        Platform.isWindows ||
         Platform.isLinux) {
       try {
         initialBrightness = await ScreenBrightness.instance.application;
@@ -1685,7 +1687,6 @@ mixin PlayerGestureControlMixin
     if (verticalDragging == false || !_verticalDragReady) return;
     if (!Platform.isAndroid &&
         !Platform.isIOS &&
-        !Platform.isWindows &&
         !Platform.isLinux) {
       return;
     }
@@ -1748,6 +1749,9 @@ mixin PlayerGestureControlMixin
   }
 
   void setGestureBrightness(double dy) {
+    if (Platform.isWindows) {
+      return;
+    }
     double value = 0.0;
     if (dy > verStartPosition) {
       value = ((dy - verStartPosition) / _verticalDragExtent);

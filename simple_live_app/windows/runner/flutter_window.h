@@ -29,7 +29,6 @@ class FlutterWindow : public Win32Window {
   void ConfigureWindowChromeChannel();
   void ApplyFullscreenChrome();
   void RestoreWindowChrome();
-  void SetImeForShortcutCapture(bool captureEnabled);
   bool HandleShortcutKeyDown(WPARAM wparam, LPARAM lparam);
   std::string ShortcutKeyForWindowsKey(WPARAM wparam, LPARAM lparam);
   bool SendShortcutEvent(const std::string& key);
@@ -48,8 +47,6 @@ class FlutterWindow : public Win32Window {
   LONG_PTR windowed_ex_style_ = 0;
   bool fullscreen_chrome_applied_ = false;
   bool shortcut_capture_enabled_ = false;
-  HIMC default_imc_ = nullptr;
-  bool ime_disabled_ = false;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

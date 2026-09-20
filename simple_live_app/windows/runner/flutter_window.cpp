@@ -5,7 +5,6 @@
 #include <utility>
 
 #include <flutter/standard_method_codec.h>
-#include <imm.h>
 
 #include "flutter/generated_plugin_registrant.h"
 
@@ -55,9 +54,6 @@ bool FlutterWindow::OnCreate() {
               if (const auto* value =
                       std::get_if<bool>(&enabled->second)) {
                 shortcut_capture_enabled_ = *value;
-                // While shortcuts are captured the window hosts no editable
-                // text, so detach the IME to keep it from swallowing keys.
-                SetImeForShortcutCapture(*value);
               }
             }
           }
@@ -140,30 +136,7 @@ void FlutterWindow::RestoreWindowChrome() {
   fullscreen_chrome_applied_ = false;
 }
 
-void FlutterWindow::SetImeForShortcutCapture(bool captureEnabled) {
-  // captureEnabled=true means desktop shortcuts are being captured for a
-  // window without editable text: detach the IME so it cannot swallow keys.
-  // Otherwise restore the default IME context for normal text input.
-  HWND hwnd = GetHandle();
-  if (!hwnd) return;
-  if (captureEnabled && !ime_disabled_) {
-    default_imc_ = ImmAssociateContext(hwnd, nullptr);
-    ime_disabled_ = true;
-  } else if (!captureEnabled && ime_disabled_) {
-    ImmAssociateContext(hwnd, default_imc_);
-    default_imc_ = nullptr;
-    ime_disabled_ = false;
-  }
-}
-
 void FlutterWindow::OnDestroy() {
-  if (ime_disabled_) {
-    if (HWND hwnd = GetHandle()) {
-      ImmAssociateContext(hwnd, default_imc_);
-    }
-    default_imc_ = nullptr;
-    ime_disabled_ = false;
-  }
   shortcut_channel_.reset();
   window_chrome_channel_.reset();
   if (flutter_controller_) {
@@ -209,12 +182,17 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
 }
 
 bool FlutterWindow::HandleShortcutKeyDown(WPARAM wparam, LPARAM lparam) {
+  // When an editable control has focus, leave every key message to Flutter
+  // and the active IME. The Dart side keeps this capture flag in sync.
+  if (!shortcut_capture_enabled_) {
+    return false;
+  }
   const std::string key = ShortcutKeyForWindowsKey(wparam, lparam);
   if (key.empty()) {
     return false;
   }
   SendShortcutEvent(key);
-  return shortcut_capture_enabled_;
+  return true;
 }
 
 std::string FlutterWindow::ShortcutKeyForWindowsKey(WPARAM wparam,
