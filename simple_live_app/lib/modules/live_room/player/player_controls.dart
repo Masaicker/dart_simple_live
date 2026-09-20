@@ -366,7 +366,7 @@ Widget _buildGestureLayer(
           constraints.hasBoundedHeight ? constraints.maxHeight : Get.height,
         );
         return Obx(() {
-          final gestureEnabled = !Platform.isWindows &&
+          final gestureEnabled =
               AppSettingsController.instance.playerGestureControlEnable.value;
           return GestureDetector(
             behavior: HitTestBehavior.opaque,
