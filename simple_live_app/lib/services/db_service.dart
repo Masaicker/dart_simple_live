@@ -17,6 +17,40 @@ class DBService extends GetxService {
     historyBox = await Hive.openBox("History");
     followBox = await Hive.openBox("FollowUser");
     tagBox = await Hive.openBox("FollowUserTag");
+    await _repairFollowTagKeys();
+  }
+
+  static Map<String, FollowUserTag> buildFollowTagStorageMap(
+    Iterable<FollowUserTag> tags,
+  ) {
+    final result = <String, FollowUserTag>{};
+    for (final tag in tags) {
+      result[tag.id] = tag;
+    }
+    return result;
+  }
+
+  Future<void> _repairFollowTagKeys() async {
+    final entries = tagBox.toMap().entries.toList(growable: false);
+    final repaired = buildFollowTagStorageMap(
+      entries.map((entry) => entry.value),
+    );
+    final needsRepair = entries.length != repaired.length ||
+        entries.any((entry) => entry.key != entry.value.id);
+    if (!needsRepair) {
+      return;
+    }
+
+    // Write valid UUID keys before removing legacy numeric keys so a failed
+    // migration cannot erase the only copy of a tag.
+    await tagBox.putAll(repaired);
+    final staleKeys = entries
+        .map((entry) => entry.key)
+        .where((key) => !repaired.containsKey(key))
+        .toList(growable: false);
+    if (staleKeys.isNotEmpty) {
+      await tagBox.deleteAll(staleKeys);
+    }
   }
 
   // follow_user_tag 相关逻辑
@@ -69,9 +103,7 @@ class DBService extends GetxService {
 
   // 调整标签顺序
   Future updateFollowTagOrder(List<FollowUserTag> userTagList) async {
-    final Map<int, FollowUserTag> updatedMap = {
-      for (int i = 0; i < userTagList.length; i++) i: userTagList[i]
-    };
+    final updatedMap = buildFollowTagStorageMap(userTagList);
     await tagBox.clear();
     await tagBox.putAll(updatedMap);
   }

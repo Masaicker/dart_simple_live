@@ -42,6 +42,11 @@ jobs:
           cd simple_live_app
           flutter pub get
 
+      - name: Test Follow Tag Storage
+        run: |
+          cd simple_live_app
+          flutter test test/db_service_tag_test.dart
+
       - name: Install flutter_distributor
         run: dart pub global activate flutter_distributor
 
