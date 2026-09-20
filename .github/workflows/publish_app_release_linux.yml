@@ -24,7 +24,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref }}
 
@@ -71,7 +71,7 @@ jobs:
           echo "is_tag=$is_tag" >> "$GITHUB_OUTPUT"
 
       - name: Upload Linux to Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: linux
           path: |
