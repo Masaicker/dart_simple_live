@@ -73,8 +73,8 @@ class DBService extends GetxService {
 
   // 调整标签顺序
   Future updateFollowTagOrder(List<FollowUserTag> userTagList) async {
-    final Map<String, FollowUserTag> updatedMap = {
-      for (final tag in userTagList) tag.id: tag,
+    final Map<int, FollowUserTag> updatedMap = {
+      for (int i = 0; i < userTagList.length; i++) i: userTagList[i]
     };
     await tagBox.clear();
     await tagBox.putAll(updatedMap);

@@ -17,7 +17,7 @@ class DBService extends GetxService {
     historyBox = await Hive.openBox("History");
     followBox = await Hive.openBox("FollowUser");
     tagBox = await Hive.openBox("FollowUserTag");
-    await _repairFollowTagKeys();
+    await _repairFollowTags();
   }
 
   static Map<String, FollowUserTag> buildFollowTagStorageMap(
@@ -30,18 +30,74 @@ class DBService extends GetxService {
     return result;
   }
 
-  Future<void> _repairFollowTagKeys() async {
+  static Map<String, FollowUserTag> buildRepairedFollowTagStorageMap(
+    Iterable<MapEntry<dynamic, FollowUserTag>> entries,
+  ) {
+    final result = <String, FollowUserTag>{};
+    final canonicalIds = <String>{};
+    for (final entry in entries) {
+      final tag = entry.value;
+      final isCanonical = entry.key == tag.id;
+      final existing = result[tag.id];
+      if (existing == null) {
+        result[tag.id] = tag;
+        if (isCanonical) {
+          canonicalIds.add(tag.id);
+        }
+        continue;
+      }
+
+      final existingIsCanonical = canonicalIds.contains(tag.id);
+      final preferred = isCanonical || !existingIsCanonical ? tag : existing;
+      result[tag.id] = preferred;
+      if (isCanonical) {
+        canonicalIds.add(tag.id);
+      }
+    }
+    return result;
+  }
+
+  static List<FollowUserTag> sortFollowTags(
+    Iterable<FollowUserTag> tags,
+  ) {
+    final indexedTags = tags.toList(growable: false).asMap().entries.toList();
+    indexedTags.sort((left, right) {
+      final leftIndex =
+          left.value.sortIndex < 0 ? 0x7fffffff : left.value.sortIndex;
+      final rightIndex =
+          right.value.sortIndex < 0 ? 0x7fffffff : right.value.sortIndex;
+      final order = leftIndex.compareTo(rightIndex);
+      return order != 0 ? order : left.key.compareTo(right.key);
+    });
+    return indexedTags.map((entry) => entry.value).toList(growable: false);
+  }
+
+  static List<FollowUserTag> reindexFollowTags(
+    Iterable<FollowUserTag> tags,
+  ) {
+    final list = tags.toList(growable: false);
+    return [
+      for (var index = 0; index < list.length; index++)
+        list[index].copyWith(sortIndex: index),
+    ];
+  }
+
+  Future<void> _repairFollowTags() async {
     final entries = tagBox.toMap().entries.toList(growable: false);
+    final tagsById = buildRepairedFollowTagStorageMap(entries);
     final repaired = buildFollowTagStorageMap(
-      entries.map((entry) => entry.value),
+      reindexFollowTags(sortFollowTags(tagsById.values)),
     );
     final needsRepair = entries.length != repaired.length ||
-        entries.any((entry) => entry.key != entry.value.id);
+        entries.any((entry) => entry.key != entry.value.id) ||
+        repaired.entries.any(
+          (entry) => tagBox.get(entry.key)?.sortIndex != entry.value.sortIndex,
+        );
     if (!needsRepair) {
       return;
     }
 
-    // Write valid UUID keys before removing legacy numeric keys so a failed
+    // Write repaired values before removing legacy numeric keys so a failed
     // migration cannot erase the only copy of a tag.
     await tagBox.putAll(repaired);
     final staleKeys = entries
@@ -74,7 +130,17 @@ class DBService extends GetxService {
 
   // 获取标签列表
   List<FollowUserTag> getFollowTagList() {
-    return tagBox.values.toList();
+    return sortFollowTags(tagBox.values);
+  }
+
+  int getNextFollowTagSortIndex() {
+    var maxSortIndex = -1;
+    for (final tag in tagBox.values) {
+      if (tag.sortIndex > maxSortIndex) {
+        maxSortIndex = tag.sortIndex;
+      }
+    }
+    return maxSortIndex + 1;
   }
 
   // 修改标签
@@ -96,15 +162,21 @@ class DBService extends GetxService {
       return null;
     }
     final String uniqueId = uuid.v4();
-    final followUserTag = FollowUserTag(id: uniqueId, tag: name, userId: []);
+    final followUserTag = FollowUserTag(
+      id: uniqueId,
+      tag: name,
+      userId: [],
+      sortIndex: getNextFollowTagSortIndex(),
+    );
     await tagBox.put(uniqueId, followUserTag);
     return followUserTag;
   }
 
   // 调整标签顺序
   Future updateFollowTagOrder(List<FollowUserTag> userTagList) async {
-    final updatedMap = buildFollowTagStorageMap(userTagList);
-    await tagBox.clear();
+    final updatedMap = buildFollowTagStorageMap(
+      reindexFollowTags(userTagList),
+    );
     await tagBox.putAll(updatedMap);
   }
 

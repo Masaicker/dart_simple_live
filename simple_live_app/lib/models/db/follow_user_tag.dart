@@ -15,10 +15,15 @@ class FollowUserTag {
   @HiveField(3)
   List<String> userId;
 
+  // 用户自定义标签的显示顺序
+  @HiveField(4, defaultValue: -1)
+  int sortIndex;
+
   FollowUserTag({
     required this.id,
     required this.tag,
     required this.userId,
+    this.sortIndex = -1,
   });
 
   factory FollowUserTag.fromJson(Map<String, dynamic> json) {
@@ -29,6 +34,7 @@ class FollowUserTag {
       userId: rawUserIds is List
           ? rawUserIds.map((e) => e.toString()).toList()
           : <String>[],
+      sortIndex: (json['sortIndex'] as num?)?.toInt() ?? -1,
     );
   }
 
@@ -37,6 +43,7 @@ class FollowUserTag {
       'id': id,
       'tag': tag,
       'userId': userId,
+      'sortIndex': sortIndex,
     };
   }
 
@@ -44,11 +51,13 @@ class FollowUserTag {
     String? id,
     String? tag,
     List<String>? userId,
+    int? sortIndex,
   }) {
     return FollowUserTag(
       id: id ?? this.id,
       tag: tag ?? this.tag,
       userId: userId ?? this.userId,
+      sortIndex: sortIndex ?? this.sortIndex,
     );
   }
 }

@@ -117,17 +117,19 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
                     },
                   ),
                 ),
-                AppStyle.divider,
-                Obx(
-                  () => SettingsSwitch(
-                    title: "滑动调节音量/亮度",
-                    subtitle: "播放页左右两侧上下滑动调节亮度和音量",
-                    value: controller.playerGestureControlEnable.value,
-                    onChanged: (e) {
-                      controller.setPlayerGestureControlEnable(e);
-                    },
+                if (!Platform.isWindows) ...[
+                  AppStyle.divider,
+                  Obx(
+                    () => SettingsSwitch(
+                      title: "滑动调节音量/亮度",
+                      subtitle: "播放页左右两侧上下滑动调节亮度和音量",
+                      value: controller.playerGestureControlEnable.value,
+                      onChanged: (e) {
+                        controller.setPlayerGestureControlEnable(e);
+                      },
+                    ),
                   ),
-                ),
+                ],
                 AppStyle.divider,
                 Obx(
                   () => SettingsSwitch(

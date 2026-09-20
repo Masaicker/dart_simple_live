@@ -652,13 +652,15 @@ class FollowUserController extends BasePageController<FollowUser> {
   }
 
   // 调整标签顺序
-  void updateTagOrder(int oldIndex, int newIndex) {
+  Future<void> updateTagOrder(int oldIndex, int newIndex) async {
     if (newIndex > oldIndex) newIndex -= 1; // 处理索引调整
     final item = userTagList.removeAt(oldIndex);
     userTagList.insert(newIndex, item);
+    userTagList.assignAll(DBService.reindexFollowTags(userTagList));
+    FollowService.instance.followTagList.assignAll(userTagList);
     tagList.value = tagList.take(3).toList();
     tagList.addAll(userTagList);
-    DBService.instance.updateFollowTagOrder(userTagList);
+    await DBService.instance.updateFollowTagOrder(userTagList);
   }
 
   @override

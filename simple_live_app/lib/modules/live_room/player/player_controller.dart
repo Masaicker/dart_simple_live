@@ -1678,6 +1678,10 @@ mixin PlayerGestureControlMixin
 
   /// 竖向手势更新
   void onVerticalDragUpdate(DragUpdateDetails e) async {
+    if (Platform.isWindows) {
+      cancelVerticalDrag();
+      return;
+    }
     if (lockControlsState.value && fullScreenState.value) {
       return;
     }
@@ -1707,6 +1711,9 @@ mixin PlayerGestureControlMixin
   int lastVolume = -1; // it's ok to be -1
 
   void setGestureVolume(double dy) {
+    if (Platform.isWindows) {
+      return;
+    }
     double value = 0.0;
     double seek;
     if (dy > verStartPosition) {
@@ -1740,7 +1747,10 @@ mixin PlayerGestureControlMixin
 
   Future<void> _realSetVolume(int volume) async {
     Log.logPrint(volume);
-    if (Platform.isWindows || Platform.isLinux) {
+    if (Platform.isWindows) {
+      return;
+    }
+    if (Platform.isLinux) {
       await setSessionPlayerVolume(volume.toDouble(), persist: true);
       return;
     }

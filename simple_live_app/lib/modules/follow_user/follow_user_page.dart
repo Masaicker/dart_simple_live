@@ -843,8 +843,8 @@ class FollowUserPage extends GetView<FollowUserController> {
                     ),
                   );
                 },
-                onReorder: (int oldIndex, int newIndex) {
-                  controller.updateTagOrder(oldIndex, newIndex);
+                onReorder: (int oldIndex, int newIndex) async {
+                  await controller.updateTagOrder(oldIndex, newIndex);
                 },
               ),
             ),

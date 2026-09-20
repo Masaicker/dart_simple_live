@@ -471,11 +471,27 @@ class BulkDataImportService {
   static Future<void> _putTags(
       Iterable<FollowUserTag> tags, BulkDataPolicy policy,
       {SyncProgressCallback? onProgress}) async {
+    final tagList = tags.toList(growable: false);
     final buffer = <String, FollowUserTag>{};
-    final total = tags.length;
+    final total = tagList.length;
     var written = 0;
-    for (final tag in tags) {
-      buffer[tag.id] = tag;
+    var nextSortIndex = DBService.instance.getNextFollowTagSortIndex();
+    for (final tag in tagList) {
+      if (tag.sortIndex >= nextSortIndex) {
+        nextSortIndex = tag.sortIndex + 1;
+      }
+    }
+    for (final tag in tagList) {
+      final existing = DBService.instance.tagBox.get(tag.id);
+      final existingSortIndex = existing?.sortIndex;
+      final storedTag = tag.sortIndex >= 0
+          ? tag
+          : tag.copyWith(
+              sortIndex: existingSortIndex != null && existingSortIndex >= 0
+                  ? existingSortIndex
+                  : nextSortIndex++,
+            );
+      buffer[storedTag.id] = storedTag;
       if (buffer.length >= policy.dbBatchSize) {
         await DBService.instance.tagBox.putAll(buffer);
         written += buffer.length;
