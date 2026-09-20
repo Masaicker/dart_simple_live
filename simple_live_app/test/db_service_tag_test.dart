@@ -89,6 +89,35 @@ void main() {
     expect(reordered.map((tag) => tag.sortIndex), orderedEquals([0, 1]));
   });
 
+  test('duplicate tag names are merged in their displayed order', () {
+    final laterDuplicate = FollowUserTag(
+      id: 'tag-b',
+      tag: ' 常看 ',
+      userId: ['room-2', 'room-1'],
+      sortIndex: 3,
+    );
+    final first = FollowUserTag(
+      id: 'tag-a',
+      tag: '常看',
+      userId: ['room-1'],
+      sortIndex: 1,
+    );
+    final other = FollowUserTag(
+      id: 'tag-c',
+      tag: '团播',
+      userId: ['room-3'],
+      sortIndex: 2,
+    );
+
+    final merged = DBService.mergeDuplicateFollowTagNames(
+      DBService.sortFollowTags([laterDuplicate, other, first]),
+    );
+
+    expect(merged.map((tag) => tag.id), orderedEquals(['tag-a', 'tag-c']));
+    expect(merged.first.tag, '常看');
+    expect(merged.first.userId, orderedEquals(['room-1', 'room-2']));
+  });
+
   test('legacy tags without sort indexes keep their existing order', () {
     final first = FollowUserTag(id: 'tag-z', tag: 'Z', userId: []);
     final second = FollowUserTag(id: 'tag-a', tag: 'A', userId: []);
@@ -191,6 +220,48 @@ void main() {
       expect(
         dbService.getFollowTag('新名称')?.userId,
         orderedEquals(['room-2']),
+      );
+      expect(
+        dbService.getFollowTagList().map((tag) => tag.sortIndex),
+        orderedEquals([0, 1]),
+      );
+    });
+
+    test('startup merges different UUIDs with the same tag name', () async {
+      final first = FollowUserTag(
+        id: 'tag-a',
+        tag: '常看',
+        userId: ['room-1'],
+        sortIndex: 0,
+      );
+      final duplicate = FollowUserTag(
+        id: 'tag-b',
+        tag: ' 常看 ',
+        userId: ['room-1', 'room-2'],
+        sortIndex: 2,
+      );
+      final other = FollowUserTag(
+        id: 'tag-c',
+        tag: '团播',
+        userId: ['room-3'],
+        sortIndex: 1,
+      );
+      await dbService.tagBox.putAll({
+        first.id: first,
+        duplicate.id: duplicate,
+        other.id: other,
+      });
+
+      await dbService.init();
+
+      expect(dbService.tagBox.keys, unorderedEquals(['tag-a', 'tag-c']));
+      expect(
+        dbService.getFollowTagList().map((tag) => tag.id),
+        orderedEquals(['tag-a', 'tag-c']),
+      );
+      expect(
+        dbService.getFollowTag('常看')?.userId,
+        orderedEquals(['room-1', 'room-2']),
       );
       expect(
         dbService.getFollowTagList().map((tag) => tag.sortIndex),

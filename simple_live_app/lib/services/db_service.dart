@@ -17,7 +17,7 @@ class DBService extends GetxService {
     historyBox = await Hive.openBox("History");
     followBox = await Hive.openBox("FollowUser");
     tagBox = await Hive.openBox("FollowUserTag");
-    await _repairFollowTags();
+    await repairFollowTags();
   }
 
   static Map<String, FollowUserTag> buildFollowTagStorageMap(
@@ -82,17 +82,54 @@ class DBService extends GetxService {
     ];
   }
 
-  Future<void> _repairFollowTags() async {
+  static List<FollowUserTag> mergeDuplicateFollowTagNames(
+    Iterable<FollowUserTag> tags,
+  ) {
+    final merged = <FollowUserTag>[];
+    final indexByName = <String, int>{};
+    for (final tag in tags) {
+      final normalizedName = tag.tag.trim();
+      final existingIndex = indexByName[normalizedName];
+      if (existingIndex == null) {
+        indexByName[normalizedName] = merged.length;
+        merged.add(tag.copyWith(
+          tag: normalizedName,
+          userId: tag.userId.toSet().toList(growable: false),
+        ));
+        continue;
+      }
+
+      final existing = merged[existingIndex];
+      merged[existingIndex] = existing.copyWith(
+        userId: {
+          ...existing.userId,
+          ...tag.userId,
+        }.toList(growable: false),
+      );
+    }
+    return merged;
+  }
+
+  Future<void> repairFollowTags() async {
     final entries = tagBox.toMap().entries.toList(growable: false);
     final tagsById = buildRepairedFollowTagStorageMap(entries);
     final repaired = buildFollowTagStorageMap(
-      reindexFollowTags(sortFollowTags(tagsById.values)),
+      reindexFollowTags(
+        mergeDuplicateFollowTagNames(sortFollowTags(tagsById.values)),
+      ),
     );
     final needsRepair = entries.length != repaired.length ||
         entries.any((entry) => entry.key != entry.value.id) ||
-        repaired.entries.any(
-          (entry) => tagBox.get(entry.key)?.sortIndex != entry.value.sortIndex,
-        );
+        repaired.entries.any((entry) {
+          final stored = tagBox.get(entry.key);
+          final expected = entry.value;
+          return stored == null ||
+              stored.id != expected.id ||
+              stored.tag != expected.tag ||
+              stored.sortIndex != expected.sortIndex ||
+              !const ListEquality<String>()
+                  .equals(stored.userId, expected.userId);
+        });
     if (!needsRepair) {
       return;
     }
@@ -120,12 +157,15 @@ class DBService extends GetxService {
   }
 
   FollowUserTag? getFollowTag(String tag) {
-    return tagBox.values.firstWhereOrNull((item) => item.tag == tag);
+    final normalizedName = tag.trim();
+    return tagBox.values
+        .firstWhereOrNull((item) => item.tag.trim() == normalizedName);
   }
 
   // 判断标签名称是否重复
   bool getFollowTagExistByTag(String tag) {
-    return tagBox.values.any((item) => item.tag == tag);
+    final normalizedName = tag.trim();
+    return tagBox.values.any((item) => item.tag.trim() == normalizedName);
   }
 
   // 获取标签列表

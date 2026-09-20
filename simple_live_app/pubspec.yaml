@@ -1,5 +1,5 @@
 name: simple_live_app
-version: 1.13.1+11303
+version: 1.13.1+11304
 publish_to: none
 description: "Simple Live APP"
 environment:
@@ -94,6 +94,11 @@ dev_dependencies:
 
 dependency_overrides:
   sherpa_onnx_ios: 1.13.4
+  # The upstream Windows plugin changes physical monitor brightness on focus
+  # transitions. Keep brightness support on other platforms, but use a no-op
+  # native implementation on Windows.
+  screen_brightness_windows:
+    path: ../third_party/screen_brightness_windows_noop
   canvas_danmaku:
     path: ../third_party/canvas_danmaku
 

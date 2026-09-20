@@ -1,0 +1,19 @@
+name: screen_brightness_windows
+description: Windows no-op implementation used to avoid changing monitor brightness.
+version: 2.1.2
+publish_to: none
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+  flutter: ">=3.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  screen_brightness_platform_interface: ">=2.1.2 <3.0.0"
+
+flutter:
+  plugin:
+    platforms:
+      windows:
+        pluginClass: ScreenBrightnessWindowsPluginCApi

@@ -281,6 +281,7 @@ class BulkDataImportService {
       await DBService.instance.tagBox.clear();
     }
     await _putTags(tags, policy, onProgress: onProgress);
+    await DBService.instance.repairFollowTags();
     final result = BulkImportResult(
       total: rawTags.length,
       imported: tags.length,

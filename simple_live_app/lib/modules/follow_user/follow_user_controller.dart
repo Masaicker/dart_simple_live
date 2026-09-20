@@ -617,17 +617,19 @@ class FollowUserController extends BasePageController<FollowUser> {
   }
 
   void updateTagName(FollowUserTag followUserTag, String newTagName) {
+    final String trimmedName = newTagName.trim();
     // 未操作
-    if (followUserTag.tag == newTagName) {
+    if (followUserTag.tag == trimmedName) {
       return;
     }
     // 避免重名
-    if (tagList.any((item) => item.tag == newTagName)) {
+    if (tagList.any(
+      (item) => item.id != followUserTag.id && item.tag.trim() == trimmedName,
+    )) {
       SmartDialog.showToast("标签名重复，修改失败");
       return;
     }
     // 限制长度
-    final String trimmedName = newTagName.trim();
     if (trimmedName.isEmpty) {
       SmartDialog.showToast("标签名不能为空，修改失败");
       return;
