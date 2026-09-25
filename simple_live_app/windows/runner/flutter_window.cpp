@@ -4,6 +4,7 @@
 #include <string>
 #include <utility>
 
+#include <imm.h>
 #include <flutter/standard_method_codec.h>
 
 #include "flutter/generated_plugin_registrant.h"
@@ -70,6 +71,10 @@ bool FlutterWindow::OnCreate() {
             }
           }
           result->Success();
+          return;
+        }
+        if (call.method_name() == "inputStateSnapshot") {
+          result->Success(flutter::EncodableValue(CurrentInputState()));
           return;
         }
         result->NotImplemented();
@@ -156,6 +161,35 @@ void FlutterWindow::OnDestroy() {
   }
 
   Win32Window::OnDestroy();
+}
+
+std::string FlutterWindow::CurrentInputState() {
+  std::string state = "layout=" + CurrentKeyboardLayoutName();
+  const HWND focused = GetFocus();
+  if (!focused) {
+    return state + " focus=none";
+  }
+  const HWND flutter_view =
+      flutter_controller_ ? flutter_controller_->view()->GetNativeWindow()
+                          : nullptr;
+  state += focused == flutter_view ? " focus=flutterView"
+           : focused == GetHandle() ? " focus=runner"
+                                    : " focus=other";
+  const HIMC ime_context = ImmGetContext(focused);
+  if (!ime_context) {
+    return state + " imeContext=none";
+  }
+  state += ImmGetOpenStatus(ime_context) ? " immOpen=true" : " immOpen=false";
+  DWORD conversion = 0;
+  DWORD sentence = 0;
+  if (ImmGetConversionStatus(ime_context, &conversion, &sentence)) {
+    state += (conversion & IME_CMODE_NATIVE) ? " immNativeMode=true"
+                                             : " immNativeMode=false";
+  } else {
+    state += " immNativeMode=unknown";
+  }
+  ImmReleaseContext(focused, ime_context);
+  return state;
 }
 
 LRESULT

@@ -527,6 +527,8 @@ class MyApp extends StatelessWidget {
       MethodChannel("simple_live/desktop_shortcuts");
   static bool _desktopShortcutHandlerBound = false;
   static bool? _desktopShortcutCaptureEnabled;
+  static bool? _lastEditableTextFocus;
+  static bool _snapshotOnNextEditableKey = false;
 
   const MyApp({super.key});
 
@@ -691,12 +693,43 @@ class MyApp extends StatelessWidget {
     }
   }
 
+  static Future<void> _logDesktopInputState(String reason) async {
+    if (!Platform.isWindows ||
+        !AppSettingsController.instance.logEnable.value) {
+      return;
+    }
+    try {
+      final state = await _desktopShortcutChannel.invokeMethod<String>(
+        "inputStateSnapshot",
+      );
+      _logDesktopImeDiagnostic("$reason: $state");
+    } catch (e) {
+      _logDesktopImeDiagnostic("$reason: snapshot failed: $e");
+    }
+  }
+
   static Future<void> _syncDesktopShortcutCaptureState() async {
     if (!_isDesktopPlatform) {
       return;
     }
+    final editableTextFocused = _hasEditableTextFocus;
+    if (Platform.isWindows &&
+        _lastEditableTextFocus != editableTextFocused) {
+      _lastEditableTextFocus = editableTextFocused;
+      _snapshotOnNextEditableKey = editableTextFocused;
+      unawaited(_logDesktopInputState(
+        "EditableText focus=$editableTextFocused",
+      ));
+      if (editableTextFocused) {
+        Future<void>.delayed(const Duration(milliseconds: 200), () {
+          if (_hasEditableTextFocus) {
+            unawaited(_logDesktopInputState("EditableText focus after 200ms"));
+          }
+        });
+      }
+    }
     final enabled =
-        Get.isRegistered<LiveRoomController>() && !_hasEditableTextFocus;
+        Get.isRegistered<LiveRoomController>() && !editableTextFocused;
     if (_desktopShortcutCaptureEnabled == enabled) {
       return;
     }
@@ -714,9 +747,14 @@ class MyApp extends StatelessWidget {
   Future<void> _handleGlobalShortcut(KeyDownEvent event) async {
     unawaited(_syncDesktopShortcutCaptureState());
     if (Platform.isWindows && HardwareKeyboard.instance.isMetaPressed) {
+      _snapshotOnNextEditableKey = true;
       return;
     }
     if (_hasEditableTextFocus) {
+      if (_snapshotOnNextEditableKey) {
+        _snapshotOnNextEditableKey = false;
+        unawaited(_logDesktopInputState("first key with EditableText focus"));
+      }
       return;
     }
 
@@ -843,11 +881,13 @@ class MyApp extends StatelessWidget {
       return null;
     }
     if (call.method == "inputLanguageChanged") {
+      _snapshotOnNextEditableKey = true;
       _logDesktopImeDiagnostic(
           "Windows input layout changed: ${call.arguments}");
       return null;
     }
     if (call.method == "inputLanguageSnapshot") {
+      _snapshotOnNextEditableKey = true;
       _logDesktopImeDiagnostic(
           "Windows window activated with input layout: ${call.arguments}");
       return null;
