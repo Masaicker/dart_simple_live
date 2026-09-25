@@ -527,9 +527,6 @@ class MyApp extends StatelessWidget {
       MethodChannel("simple_live/desktop_shortcuts");
   static bool _desktopShortcutHandlerBound = false;
   static bool? _desktopShortcutCaptureEnabled;
-  static bool? _imeDiagnosticsEnabled;
-  static bool? _lastEditableTextFocus;
-  static bool _snapshotOnNextEditableKey = false;
 
   const MyApp({super.key});
 
@@ -686,66 +683,12 @@ class MyApp extends StatelessWidget {
         focusContext.findAncestorWidgetOfExactType<EditableText>() != null;
   }
 
-  static void _logDesktopImeDiagnostic(String message) {
-    if (Platform.isWindows && AppSettingsController.instance.logEnable.value) {
-      Log.writeLog(
-          "[IME诊断] ${DateTime.now().toIso8601String()} $message",
-          Level.debug);
-    }
-  }
-
-  static Future<void> _logDesktopInputState(String reason) async {
-    if (!Platform.isWindows ||
-        !AppSettingsController.instance.logEnable.value) {
-      return;
-    }
-    try {
-      final state = await _desktopShortcutChannel.invokeMethod<String>(
-        "inputStateSnapshot",
-      );
-      _logDesktopImeDiagnostic("$reason: $state");
-    } catch (e) {
-      _logDesktopImeDiagnostic("$reason: snapshot failed: $e");
-    }
-  }
-
   static Future<void> _syncDesktopShortcutCaptureState() async {
     if (!_isDesktopPlatform) {
       return;
     }
-    if (Platform.isWindows) {
-      final diagnosticsEnabled =
-          AppSettingsController.instance.logEnable.value;
-      if (_imeDiagnosticsEnabled != diagnosticsEnabled) {
-        _imeDiagnosticsEnabled = diagnosticsEnabled;
-        try {
-          await _desktopShortcutChannel.invokeMethod(
-            "setImeDiagnosticsEnabled",
-            diagnosticsEnabled,
-          );
-        } catch (e) {
-          Log.d("输入法诊断状态同步失败: $e");
-        }
-      }
-    }
-    final editableTextFocused = _hasEditableTextFocus;
-    if (Platform.isWindows &&
-        _lastEditableTextFocus != editableTextFocused) {
-      _lastEditableTextFocus = editableTextFocused;
-      _snapshotOnNextEditableKey = editableTextFocused;
-      unawaited(_logDesktopInputState(
-        "EditableText focus=$editableTextFocused",
-      ));
-      if (editableTextFocused) {
-        Future<void>.delayed(const Duration(milliseconds: 200), () {
-          if (_hasEditableTextFocus) {
-            unawaited(_logDesktopInputState("EditableText focus after 200ms"));
-          }
-        });
-      }
-    }
     final enabled =
-        Get.isRegistered<LiveRoomController>() && !editableTextFocused;
+        Get.isRegistered<LiveRoomController>() && !_hasEditableTextFocus;
     if (_desktopShortcutCaptureEnabled == enabled) {
       return;
     }
@@ -762,15 +705,7 @@ class MyApp extends StatelessWidget {
 
   Future<void> _handleGlobalShortcut(KeyDownEvent event) async {
     unawaited(_syncDesktopShortcutCaptureState());
-    if (Platform.isWindows && HardwareKeyboard.instance.isMetaPressed) {
-      _snapshotOnNextEditableKey = true;
-      return;
-    }
     if (_hasEditableTextFocus) {
-      if (_snapshotOnNextEditableKey) {
-        _snapshotOnNextEditableKey = false;
-        unawaited(_logDesktopInputState("first key with EditableText focus"));
-      }
       return;
     }
 
@@ -894,29 +829,6 @@ class MyApp extends StatelessWidget {
   Future<dynamic> _handleDesktopShortcutMethod(MethodCall call) async {
     if (call.method == "shortcutCaptureStateRequested") {
       await _syncDesktopShortcutCaptureState();
-      return null;
-    }
-    if (call.method == "inputLanguageChanged") {
-      _snapshotOnNextEditableKey = true;
-      _logDesktopImeDiagnostic(
-          "Windows input layout changed: ${call.arguments}");
-      return null;
-    }
-    if (call.method == "imeWindowMessage") {
-      final message = call.arguments?.toString() ?? "";
-      if (message.startsWith("WM_INPUTLANGCHANGE")) {
-        _snapshotOnNextEditableKey = true;
-      }
-      _logDesktopImeDiagnostic("Flutter view message: $message");
-      return null;
-    }
-    if (call.method == "inputLanguageSnapshot") {
-      _snapshotOnNextEditableKey = true;
-      _logDesktopImeDiagnostic(
-          "Windows window activated with input layout: ${call.arguments}");
-      Future<void>.delayed(const Duration(milliseconds: 150), () {
-        unawaited(_logDesktopInputState("window activated after 150ms"));
-      });
       return null;
     }
     if (call.method != "shortcutKeyDown") {
