@@ -20,6 +20,7 @@ simple_live_tv_app/.vscode/settings.json
 .codex/
 .agents/
 .uploads/
+.codegraph/
 
 # =============================================================================
 # Dart / Flutter build & dependency artifacts

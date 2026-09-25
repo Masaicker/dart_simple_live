@@ -155,6 +155,20 @@ class SyncClientRequest {
     }
   }
 
+  Future<bool> syncDouyuAccount(SyncClinet client, String cookie) async {
+    var url = "http://${client.address}:${client.port}/sync/account/douyu";
+    var data = await HttpClient.instance.postJson(
+      url,
+      data: {"cookie": cookie},
+    );
+
+    if (data["status"]) {
+      return true;
+    } else {
+      throw data["message"];
+    }
+  }
+
   Future<bool> syncKuaishouAccount(
     SyncClinet client,
     String cookie,

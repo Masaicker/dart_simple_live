@@ -1918,6 +1918,24 @@ class PlayerController extends BaseController
   int? _iosVideoSourceHeight;
   bool _iosVideoOutputForceApply = false;
 
+  /// 播放中断、正在重连（该状态下 FGS 必须保持运行，不得撤销）
+  bool _playbackReconnecting = false;
+
+  /// App 是否处于后台（LiveRoomController 覆盖）
+  bool get isAppBackground => false;
+
+  /// 是否仍期望继续播放（房间关闭/确认下播时为 false）
+  bool get playbackIntended => !_playerClosing;
+
+  /// 后台通知展示的标题（主播名）与副标题
+  String get playbackTitle => '';
+  String get playbackSubtitle => '';
+
+  /// 供子类读取当前是否处于重连中
+  bool get playbackReconnecting => _playbackReconnecting;
+
+  StreamSubscription<BackgroundPlaybackEvent>? _backgroundEventSubscription;
+
   String get videoOutputResolution {
     final output = _iosVideoOutputSize;
     if (output != null) {
@@ -2068,7 +2086,7 @@ class PlayerController extends BaseController
   static const _surfaceRecoveryValidationDelay = Duration(milliseconds: 600);
   static const _maxSurfaceRecoveryAttempts = 3;
   static const _playbackStallSampleInterval = Duration(seconds: 3);
-  static const _playbackStallTimeout = Duration(seconds: 10);  // 从 15 秒缩短到 10 秒
+  static const _playbackStallTimeout = Duration(seconds: 10); // 从 15 秒缩短到 10 秒
   static const _playbackBufferingStallTimeout = Duration(seconds: 30);
   static const _playbackStallCooldown = Duration(seconds: 5);
 
@@ -2150,13 +2168,15 @@ class PlayerController extends BaseController
             DateTime.now().add(_surfaceRecoveryGraceDuration);
         unawaited(_applyResolvedPlayerVolume());
         WakelockPlus.enable();
-        unawaited(_syncBackgroundPlaybackService(true));
+        _playbackReconnecting = false;
+        unawaited(_syncBackgroundPlayback());
         Log.d("Playing");
         refreshIosVideoOutputLimit(force: true);
         // 只有持续播放一段时间才清零，避免坏流在每次重开后立刻绕过上限。
         _scheduleStablePlaybackReset(generation);
       } else {
         _cancelStablePlaybackTimer();
+        unawaited(_syncBackgroundPlayback());
       }
     });
 
@@ -2212,6 +2232,8 @@ class PlayerController extends BaseController
     // Fix Issue #57: 启动Surface健康检查
     _startSurfaceHealthCheck();
     _startPlaybackStallWatchdog();
+    _backgroundEventSubscription = BackgroundPlaybackService.instance.events
+        .listen(_handleBackgroundPlaybackEvent);
   }
 
   void disposeStream() {
@@ -2221,6 +2243,7 @@ class PlayerController extends BaseController
     _widthSubscription?.cancel();
     _heightSubscription?.cancel();
     _videoParamsSubscription?.cancel();
+    _backgroundEventSubscription?.cancel();
     _logSubscription?.cancel();
     _pipSubscription?.cancel();
     _playingSubscription?.cancel();
@@ -2271,6 +2294,8 @@ class PlayerController extends BaseController
     }
     _streamErrorRetrying = true;
     _streamErrorRetryGeneration = generation;
+    _playbackReconnecting = true;
+    unawaited(_syncBackgroundPlayback());
     final mediaAtError = player.state.playlist.medias.isNotEmpty
         ? player.state.playlist.medias[player.state.playlist.index]
         : null;
@@ -2628,29 +2653,110 @@ class PlayerController extends BaseController
 
   void mediaEnd() {
     WakelockPlus.disable();
-    unawaited(stopBackgroundPlaybackService());
+    _enterPlaybackReconnecting();
   }
 
   void mediaError(String error) {
     WakelockPlus.disable();
-    unawaited(stopBackgroundPlaybackService());
+    _enterPlaybackReconnecting();
   }
 
-  Future<void> _syncBackgroundPlaybackService(bool playing) async {
+  void _enterPlaybackReconnecting() {
+    _playbackReconnecting = true;
+    unawaited(_syncBackgroundPlayback());
+  }
+
+  /// 统一同步后台播放前台服务：
+  /// 仅在【后台 + 开启后台播放 + 仍期望播放】时保持 FGS；
+  /// 重连期间状态为 reconnecting，FGS 全程不撤销。
+  Future<void> _syncBackgroundPlayback() async {
     if (!Platform.isAndroid) {
       return;
     }
-    if (playing &&
-        AppSettingsController.instance.allowBackgroundPlayback.value) {
-      await BackgroundPlaybackService.instance.start();
-    } else if (!playing ||
-        !AppSettingsController.instance.allowBackgroundPlayback.value) {
-      await BackgroundPlaybackService.instance.stop();
+    final service = BackgroundPlaybackService.instance;
+    final enabled =
+        AppSettingsController.instance.allowBackgroundPlayback.value;
+    if (!enabled || !isAppBackground || !playbackIntended) {
+      await service.stop();
+      return;
+    }
+    final state = _playbackReconnecting
+        ? BackgroundPlaybackState.reconnecting
+        : (player.state.playing
+            ? BackgroundPlaybackState.playing
+            : BackgroundPlaybackState.paused);
+    if (service.isRunning) {
+      await service.update(
+        state: state,
+        title: playbackTitle,
+        subtitle: playbackSubtitle,
+      );
+    } else {
+      await service.start(
+        state: state,
+        title: playbackTitle,
+        subtitle: playbackSubtitle,
+      );
     }
   }
 
-  Future<void> stopBackgroundPlaybackService() {
-    return BackgroundPlaybackService.instance.stop();
+  Future<void> stopBackgroundPlaybackService() async {
+    _playbackReconnecting = false;
+    await BackgroundPlaybackService.instance.stop();
+  }
+
+  /// 供子类在生命周期变化时同步前台服务
+  Future<void> syncBackgroundPlayback() => _syncBackgroundPlayback();
+
+  /// 处理原生侧回传的媒体按钮与音频焦点事件
+  Future<void> _handleBackgroundPlaybackEvent(
+    BackgroundPlaybackEvent event,
+  ) async {
+    if (_playerClosing) {
+      return;
+    }
+    if (event.type == 'mediaButton') {
+      switch (event.action) {
+        case 'play':
+          await _resumeFromBackgroundControl();
+          break;
+        case 'pause':
+          await player.pause();
+          break;
+        case 'stop':
+          await player.pause();
+          break;
+      }
+      return;
+    }
+    if (event.type == 'audioFocus') {
+      switch (event.focusState) {
+        case 'gain':
+          await _applyResolvedPlayerVolume();
+          if (!player.state.playing) {
+            await _resumeFromBackgroundControl();
+          }
+          break;
+        case 'loss':
+        case 'loss_transient':
+          await player.pause();
+          break;
+        case 'can_duck':
+          await player.setVolume(30);
+          break;
+      }
+    }
+  }
+
+  /// 从通知栏/焦点事件恢复播放；若处于重连或已结束则走刷新链路。
+  Future<void> _resumeFromBackgroundControl() async {
+    if (_playbackReconnecting || player.state.completed) {
+      mediaError("后台控制栏恢复播放");
+      return;
+    }
+    if (!player.state.playing) {
+      await player.play();
+    }
   }
 
   Future<Map<String, String>> _readMpvDiagnosticProperties() async {

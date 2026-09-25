@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/services/live_subtitle_service.dart';
+import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/widgets/settings/settings_action.dart';
 import 'package:simple_live_app/widgets/settings/settings_card.dart';
 import 'package:simple_live_app/widgets/settings/settings_menu.dart';
@@ -141,6 +142,15 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
                     },
                   ),
                 ),
+                if (Platform.isAndroid || Platform.isIOS) AppStyle.divider,
+                if (Platform.isAndroid || Platform.isIOS)
+                  SettingsAction(
+                    title: "后台保活设置指引",
+                    subtitle: "按手机品牌设置自启动与电池策略，避免后台被清理",
+                    onTap: () => Get.toNamed(
+                      RoutePath.kSettingsBackgroundKeepalive,
+                    ),
+                  ),
               ],
             ),
           ),

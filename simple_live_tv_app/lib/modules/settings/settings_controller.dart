@@ -8,6 +8,7 @@ import 'package:simple_live_tv_app/app/controller/base_controller.dart';
 import 'package:simple_live_tv_app/app/utils.dart';
 import 'package:simple_live_tv_app/routes/app_navigation.dart';
 import 'package:simple_live_tv_app/services/bilibili_account_service.dart';
+import 'package:simple_live_tv_app/services/douyu_account_service.dart';
 import 'package:simple_live_tv_app/services/douyin_account_service.dart';
 import 'package:simple_live_tv_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_tv_app/services/signalr_service.dart';
@@ -242,6 +243,23 @@ class SettingsController extends BaseController
     } else {
       AppNavigator.toBiliBiliLogin();
     }
+  }
+
+  Future<void> douyuTap() async {
+    final account = DouyuAccountService.instance;
+    final value = await Utils.showEditTextDialog(
+      account.cookie,
+      title: "斗鱼 Cookie",
+      hintText: "粘贴已登录 www.douyu.com 的完整 Cookie，留空使用匿名播放",
+    );
+    if (value == null) {
+      return;
+    }
+    account.setCookie(value);
+    SmartDialog.showToast(
+      account.hasCookie.value ? "斗鱼 Cookie 已保存" : "已清除斗鱼 Cookie，将使用匿名播放",
+    );
+    update();
   }
 
   void douyinTap() async {

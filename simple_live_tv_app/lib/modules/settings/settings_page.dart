@@ -12,6 +12,7 @@ import 'package:simple_live_tv_app/app/utils.dart';
 import 'package:simple_live_tv_app/modules/settings/settings_controller.dart';
 import 'package:simple_live_tv_app/modules/settings/follow_update_interval_options.dart';
 import 'package:simple_live_tv_app/services/bilibili_account_service.dart';
+import 'package:simple_live_tv_app/services/douyu_account_service.dart';
 import 'package:simple_live_tv_app/services/douyin_account_service.dart';
 import 'package:simple_live_tv_app/services/follow_user_service.dart';
 import 'package:simple_live_tv_app/services/kuaishou_account_service.dart';
@@ -826,18 +827,20 @@ class SettingsPage extends GetView<SettingsController> {
           ),
         ),
         AppStyle.vGap24,
-        HighlightListTile(
+        Obx(
+          () => HighlightListTile(
           focusNode: AppFocusNode(),
           title: "斗鱼账号",
-          subtitle: "无需登录",
+          subtitle: DouyuAccountService.instance.hasCookie.value
+              ? "已配置 Cookie，支持稳定高画质播放"
+              : "未配置 Cookie，匿名高画质可能约 10 分钟后断流",
           leading: Image.asset(
             "assets/images/douyu.png",
             width: 64.w,
             height: 64.w,
           ),
-          onTap: () {
-            SmartDialog.showToast("无需登录斗鱼，您可以直接观看直播");
-          },
+          onTap: controller.douyuTap,
+        ),
         ),
         AppStyle.vGap24,
         HighlightListTile(

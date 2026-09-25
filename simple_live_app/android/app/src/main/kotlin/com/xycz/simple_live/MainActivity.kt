@@ -4,15 +4,20 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.ComponentName
 import android.content.Intent
 import android.content.res.Configuration
+import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private var appWindowChannel: MethodChannel? = null
+    private var backgroundChannel: MethodChannel? = null
     private var lastWindowState: Map<String, Any>? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -43,23 +48,83 @@ class MainActivity : FlutterActivity() {
             }
         }
         emitWindowState(force = true)
-        MethodChannel(
+        backgroundChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "simple_live/background_playback",
-        ).setMethodCallHandler { call, result ->
-            when (call.method) {
-                "start" -> {
-                    startService()
-                    result.success(null)
-                }
+        ).also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "start", "update" -> {
+                        val intent = Intent(
+                            this,
+                            BackgroundPlaybackService::class.java,
+                        ).apply {
+                            putExtra(
+                                "state",
+                                call.argument<String>("state")
+                                    ?: BackgroundPlaybackService.STATE_PLAYING,
+                            )
+                            putExtra("title", call.argument<String>("title") ?: "")
+                            putExtra("subtitle", call.argument<String>("subtitle") ?: "")
+                        }
+                        var launched = true
+                        try {
+                            if (call.method == "start") {
+                                startForegroundService(intent)
+                            } else {
+                                startService(intent)
+                            }
+                        } catch (t: Throwable) {
+                            launched = false
+                            android.util.Log.w(
+                                "BackgroundPlayback",
+                                "service launch failed: ${t.message}",
+                            )
+                        }
+                        result.success(launched)
+                    }
 
-                "stop" -> {
-                    stopService(Intent(this, BackgroundPlaybackService::class.java))
-                    result.success(null)
-                }
+                    "stop" -> {
+                        try {
+                            stopService(
+                                Intent(this, BackgroundPlaybackService::class.java),
+                            )
+                        } catch (_: Throwable) {
+                        }
+                        result.success(null)
+                    }
 
-                else -> result.notImplemented()
+                    "isBatteryOptimizationIgnored" -> {
+                        val powerManager =
+                            getSystemService(POWER_SERVICE) as PowerManager
+                        result.success(powerManager.isIgnoringBatteryOptimizations(packageName))
+                    }
+
+                    "requestIgnoreBatteryOptimizations" -> {
+                        result.success(requestIgnoreBatteryOptimizations())
+                    }
+
+                    "openBatteryOptimizationSettings" -> {
+                        result.success(openBatteryOptimizationSettings())
+                    }
+
+                    "openAutoStartSettings" -> {
+                        result.success(openAutoStartSettings())
+                    }
+
+                    "openAppDetailsSettings" -> {
+                        result.success(openAppDetailsSettings())
+                    }
+
+                    else -> result.notImplemented()
+                }
             }
+        }
+        BackgroundPlaybackService.eventListener = { event, payload ->
+            val arguments = HashMap<String, Any?>()
+            arguments["event"] = event
+            arguments.putAll(payload)
+            backgroundChannel?.invokeMethod("playbackEvent", arguments)
         }
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -179,13 +244,105 @@ class MainActivity : FlutterActivity() {
         return false
     }
 
-    private fun startService() {
-        val intent = Intent(this, BackgroundPlaybackService::class.java)
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            startForegroundService(intent)
-        } else {
-            startService(intent)
+    private fun requestIgnoreBatteryOptimizations(): Boolean {
+        try {
+            val intent = Intent(
+                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+            ).apply {
+                data = Uri.parse("package:$packageName")
+            }
+            startActivity(intent)
+            return true
+        } catch (_: Throwable) {
         }
+        return openBatteryOptimizationSettings()
+    }
+
+    private fun openBatteryOptimizationSettings(): Boolean {
+        return try {
+            startActivity(
+                Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            true
+        } catch (_: Throwable) {
+            openAppDetailsSettings()
+        }
+    }
+
+    private fun openAppDetailsSettings(): Boolean {
+        return try {
+            startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.parse("package:$packageName")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                },
+            )
+            true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    /// Try to open the OEM-specific auto-start management screen. Falls back
+    /// to the system app details page when the component is unavailable.
+    private fun openAutoStartSettings(): Boolean {
+        val candidates = listOf(
+            // Xiaomi MIUI / HyperOS
+            ComponentName(
+                "com.miui.securitycenter",
+                "com.miui.permcenter.autostart.AutoStartManagementActivity",
+            ),
+            // Huawei EMUI / HarmonyOS
+            ComponentName(
+                "com.huawei.systemmanager",
+                "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity",
+            ),
+            ComponentName(
+                "com.huawei.systemmanager",
+                "com.huawei.systemmanager.optimize.process.ProtectActivity",
+            ),
+            // OPPO ColorOS
+            ComponentName(
+                "com.coloros.safecenter",
+                "com.coloros.safecenter.permission.startup.StartupAppListActivity",
+            ),
+            ComponentName(
+                "com.coloros.safecenter",
+                "com.coloros.safecenter.startupapp.StartupAppListActivity",
+            ),
+            ComponentName(
+                "com.oplus.safecenter",
+                "com.oplus.safecenter.startupapp.StartupAppListActivity",
+            ),
+            // vivo OriginOS / Funtouch OS
+            ComponentName(
+                "com.iqoo.secure",
+                "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity",
+            ),
+            ComponentName(
+                "com.vivo.permissionmanager",
+                "com.vivo.permissionmanager.activity.BgStartUpManagerActivity",
+            ),
+            // Meizu Flyme
+            ComponentName(
+                "com.meizu.safe",
+                "com.meizu.safe.permission.SmartBGActivity",
+            ),
+        )
+        for (component in candidates) {
+            try {
+                startActivity(
+                    Intent().apply {
+                        this.component = component
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    },
+                )
+                return true
+            } catch (_: Throwable) {
+            }
+        }
+        return openAppDetailsSettings()
     }
 
     private fun showLiveStartNotification(notificationId: Int, title: String, body: String) {

@@ -117,19 +117,46 @@ class MpvOptionsService {
     );
   }
 
+  /// 网络重连与缓存默认参数（移动端直播防断流）。
+  /// 用户在高级参数/mpv.conf 中设置的同名参数会覆盖这些默认值。
+  static const Map<String, String> networkDefaultOptions = {
+    'network-timeout': '30',
+    'stream-lavf-o':
+        'reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=10',
+    'cache': 'yes',
+    'demuxer-readahead-secs': '2',
+    'demuxer-max-bytes': '16MiB',
+    'demuxer-max-back-bytes': '8MiB',
+  };
+
   static Future<void> applyToPlayer(Player player) async {
-    if (Platform.isIOS) {
-      return;
-    }
     if (player.platform is! NativePlayer) {
       return;
     }
-    final options = Map<String, String>.from(effectiveOptions())
+    final nativePlayer = player.platform as dynamic;
+    // iOS 的视频管线固定，只应用网络默认参数；audio-exclusive 使 mpv 不使用
+    // MixWithOthers，与 AppDelegate 的 .playback 类别保持一致。
+    if (Platform.isIOS) {
+      final iosOptions = <String, String>{
+        ...networkDefaultOptions,
+        'audio-exclusive': 'yes',
+      };
+      for (final entry in iosOptions.entries) {
+        try {
+          await nativePlayer.setProperty(entry.key, entry.value);
+        } catch (e) {
+          Log.d("mpv ios option skipped: ${entry.key}=${entry.value} $e");
+        }
+      }
+      return;
+    }
+    final options = Map<String, String>.from(networkDefaultOptions)
+      ..addAll(effectiveOptions())
       ..remove("vo")
       ..remove("hwdec");
     for (final entry in options.entries) {
       try {
-        await (player.platform as dynamic).setProperty(entry.key, entry.value);
+        await nativePlayer.setProperty(entry.key, entry.value);
       } catch (e) {
         Log.d("mpv option skipped: ${entry.key}=${entry.value} $e");
       }

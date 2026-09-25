@@ -10,6 +10,7 @@ import 'package:simple_live_app/services/bulk_data_import_service.dart';
 import 'package:simple_live_app/services/bilibili_account_service.dart';
 import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/douyin_account_service.dart';
+import 'package:simple_live_app/services/douyu_account_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_app/services/live_subtitle_service.dart';
@@ -355,6 +356,13 @@ class ProfileBackupService extends GetxService {
           ),
         },
         {
+          "siteId": Constant.kDouyu,
+          "cookie": LocalStorageService.instance.getValue(
+            LocalStorageService.kDouyuCookie,
+            "",
+          ),
+        },
+        {
           "siteId": Constant.kKuaishou,
           "cookie": LocalStorageService.instance.getValue(
             LocalStorageService.kKuaishouCookie,
@@ -539,6 +547,9 @@ class ProfileBackupService extends GetxService {
           } else {
             DouyinAccountService.instance.setCookie(cookie);
           }
+          break;
+        case Constant.kDouyu:
+          DouyuAccountService.instance.setCookie(cookie);
           break;
         case Constant.kKuaishou:
           final kww = item["kww"]?.toString() ?? "";

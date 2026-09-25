@@ -53,6 +53,11 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   var playbackLoadError = "".obs;
   var muted = false.obs;
   bool _autoSwitchingRoom = false;
+
+  /// 连续“未开播”自动换台保护：防止状态接口异常时无限换台
+  int _autoSwitchOfflineHops = 0;
+  DateTime? _firstOfflineHopAt;
+  static const int _maxAutoSwitchOfflineHops = 3;
   String _lastShortcutKey = "";
   String _lastShortcutSource = "";
   DateTime? _lastShortcutHandledAt;
@@ -84,6 +89,8 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   Duration? _lastWatchdogPosition;
   int _stallSampleCount = 0;
   int _bufferingSampleCount = 0;
+  bool _watchdogRefreshing = false;
+  DateTime? _lastWatchdogRefreshAt;
 
   /// 自动退出倒计时，单位秒
   var countdown = 60.obs;
@@ -311,7 +318,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     _lastWatchdogPosition = null;
     _stallSampleCount = 0;
     _bufferingSampleCount = 0;
-    _playbackWatchdog = Timer.periodic(const Duration(seconds: 5), (timer) {
+    _playbackWatchdog = Timer.periodic(const Duration(seconds: 2), (timer) {
       if (isBackground || !liveStatus.value || userPaused.value) {
         _lastWatchdogPosition = null;
         _stallSampleCount = 0;
@@ -324,36 +331,35 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
         _bufferingSampleCount = 0;
         return;
       }
-      if (player.state.buffering) {
-        // 缓冲中不算停滞，但连续缓冲超过 4 次（约20秒）视为卡死，触发刷新
-        _bufferingSampleCount += 1;
-        _lastWatchdogPosition = null;
-        _stallSampleCount = 0;
-        if (_bufferingSampleCount >= 4) {
-          _bufferingSampleCount = 0;
-          Log.w("播放长时间缓冲，自动刷新播放");
-          _refreshPlayerFromWatchdog();
-        }
-        return;
-      }
-      _bufferingSampleCount = 0;
       final position = player.state.position;
       final last = _lastWatchdogPosition;
-      if (last != null) {
-        final advanced =
-            position.inMilliseconds - last.inMilliseconds >= 1000;
-        if (!advanced) {
-          _stallSampleCount += 1;
-          if (_stallSampleCount >= 3) {
-            _stallSampleCount = 0;
-            _lastWatchdogPosition = null;
-            Log.w("检测到播放停滞，自动刷新播放");
-            _refreshPlayerFromWatchdog();
-            return;
-          }
-        } else {
-          _stallSampleCount = 0;
-        }
+      final advanced =
+          last == null || position.inMilliseconds - last.inMilliseconds >= 250;
+      final bufferLead = player.state.buffer - position;
+      final bufferExhausted = bufferLead <= const Duration(milliseconds: 350);
+      if (player.state.buffering || bufferExhausted) {
+        _bufferingSampleCount += 1;
+      } else {
+        _bufferingSampleCount = 0;
+      }
+      if (!advanced) {
+        _stallSampleCount += 1;
+      } else {
+        _stallSampleCount = 0;
+      }
+      if ((_stallSampleCount >= 2 || _bufferingSampleCount >= 3) &&
+          !_watchdogRefreshing &&
+          (_lastWatchdogRefreshAt == null ||
+              DateTime.now().difference(_lastWatchdogRefreshAt!) >=
+                  const Duration(seconds: 8))) {
+        _watchdogRefreshing = true;
+        _lastWatchdogRefreshAt = DateTime.now();
+        _stallSampleCount = 0;
+        _bufferingSampleCount = 0;
+        Log.w("检测到播放停滞，自动刷新播放");
+        unawaited(_refreshPlayerFromWatchdog().whenComplete(() {
+          _watchdogRefreshing = false;
+        }));
       }
       _lastWatchdogPosition = position;
     });
@@ -829,7 +835,10 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       online.value = detail.value!.online;
       liveStatus.value = detail.value!.status || detail.value!.isRecord;
       if (liveStatus.value) {
+        _autoSwitchOfflineHops = 0;
         getPlayQualites();
+      } else {
+        _scheduleAutoSwitchFromOfflineRoom();
       }
       if (detail.value!.isRecord) {
         SmartDialog.showToast("当前主播未开播，正在轮播录像");
@@ -871,8 +880,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
         currentQuality = playQualites.length - 1;
       } else if (qualityLevel == 3) {
         // 记住上次：按名称精确匹配，名称不存在时按偏移兜底。
-        final memory =
-            AppSettingsController.instance.getQualityMemory(site.id);
+        final memory = AppSettingsController.instance.getQualityMemory(site.id);
         if (memory != null) {
           final resolved = QualityMemory.resolveIndex(
             qualities: playQualites,
@@ -1068,44 +1076,92 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     }
   }
 
+  /// 房间打开后发现未开播时，若开启了任一自动切换开关，
+  /// 延迟片刻后检索下一个正在直播的关注房间。
+  /// 覆盖“观看记录进入已关播房间”“自动切换落在刚下播的房间”两种卡在未开播页面的场景。
+  void _scheduleAutoSwitchFromOfflineRoom() {
+    final settings = AppSettingsController.instance;
+    if (!(settings.autoSwitchNextOnLiveEnd.value ||
+        settings.autoSwitchNextOnPlaybackFailure.value)) {
+      return;
+    }
+    if (_autoSwitchingRoom) {
+      return;
+    }
+    final now = DateTime.now();
+    if (_firstOfflineHopAt == null ||
+        now.difference(_firstOfflineHopAt!) >= const Duration(minutes: 5)) {
+      _autoSwitchOfflineHops = 0;
+      _firstOfflineHopAt = now;
+    }
+    if (_autoSwitchOfflineHops >= _maxAutoSwitchOfflineHops) {
+      return;
+    }
+    final siteId = site.id;
+    final scheduledRoomId = roomId;
+    Future.delayed(const Duration(seconds: 2), () async {
+      if (_roomDisposed || site.id != siteId || roomId != scheduledRoomId) {
+        return;
+      }
+      if (liveStatus.value || _autoSwitchingRoom) {
+        return;
+      }
+      await _tryAutoSwitchToNextLiveRoom(reason: "room_offline");
+    });
+  }
+
   Future<void> _tryAutoSwitchToNextLiveRoom({required String reason}) async {
     final settings = AppSettingsController.instance;
-    final enabled = reason == "live_end"
-        ? settings.autoSwitchNextOnLiveEnd.value
-        : settings.autoSwitchNextOnPlaybackFailure.value;
+    final enabled = switch (reason) {
+      "live_end" => settings.autoSwitchNextOnLiveEnd.value,
+      "playback_failure" => settings.autoSwitchNextOnPlaybackFailure.value,
+      // 未开播房间：任一开关开启即检索，保持与“关播/播放失败后自动换台”一致的体验
+      _ =>
+        settings.autoSwitchNextOnLiveEnd.value ||
+            settings.autoSwitchNextOnPlaybackFailure.value,
+    };
     if (!enabled || _autoSwitchingRoom) {
       return;
     }
 
-    final liveChannels = FollowUserService.instance.livingList.toList();
-    if (liveChannels.isEmpty) {
-      return;
-    }
-
-    final currentId = "${site.id}_$roomId";
-    final currentIndex =
-        liveChannels.indexWhere((item) => item.id == currentId);
-    final candidates =
-        liveChannels.where((item) => item.id != currentId).toList();
+    final candidates = FollowUserService.instance.allList.toList();
     if (candidates.isEmpty) {
       return;
     }
 
-    FollowUser target;
-    if (currentIndex < 0 || currentIndex >= liveChannels.length - 1) {
-      target = candidates.first;
-    } else {
-      target = liveChannels[currentIndex + 1];
-      if (target.id == currentId) {
-        target = candidates.first;
+    final currentId = "${site.id}_$roomId";
+    final currentIndex = candidates.indexWhere((item) => item.id == currentId);
+    final ordered = <FollowUser>[
+      if (currentIndex >= 0) ...candidates.skip(currentIndex + 1),
+      ...candidates,
+    ].where((item) => item.id != currentId).toList();
+    FollowUser? target;
+    for (final candidate in ordered) {
+      try {
+        if (await Sites.allSites[candidate.siteId]!.liveSite
+            .getLiveStatus(roomId: candidate.roomId)) {
+          target = candidate;
+          break;
+        }
+      } catch (e, stackTrace) {
+        Log.e("检查自动切换候选直播状态失败：${candidate.id}", stackTrace);
       }
+    }
+    if (target == null) {
+      SmartDialog.showToast("没有找到正在直播的下一个直播间");
+      return;
     }
 
     _autoSwitchingRoom = true;
     try {
-      SmartDialog.showToast(
-        reason == "live_end" ? "当前直播已结束，已切换到下一个直播间" : "当前直播播放失败，已切换到下一个直播间",
-      );
+      SmartDialog.showToast(switch (reason) {
+        "live_end" => "当前直播已结束，已切换到下一个直播间",
+        "playback_failure" => "当前直播播放失败，已切换到下一个直播间",
+        _ => "当前直播间未开播，已切换到下一个直播间",
+      });
+      if (reason == "room_offline") {
+        _autoSwitchOfflineHops += 1;
+      }
       resetRoom(Sites.allSites[target.siteId]!, target.roomId);
     } finally {
       _autoSwitchingRoom = false;

@@ -10,6 +10,7 @@ import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/services/bilibili_account_service.dart';
 import 'package:simple_live_app/services/douyin_account_service.dart';
+import 'package:simple_live_app/services/douyu_account_service.dart';
 import 'package:simple_live_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:url_launcher/url_launcher_string.dart';
@@ -111,6 +112,63 @@ class AccountController extends GetxController {
 
   void kuaishouTap() async {
     kuaishouLogin();
+  }
+
+  void douyuTap() {
+    final account = DouyuAccountService.instance;
+    final controller = TextEditingController(text: account.cookie);
+    Get.dialog(
+      AlertDialog(
+        title: const Text("配置斗鱼 Cookie"),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                "匿名用户的斗鱼高画质可能约 10 分钟后断流；粘贴登录后的 www.douyu.com 完整 Cookie 可恢复高画质长期播放。Cookie 只保存在本机。",
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                maxLines: 6,
+                decoration: const InputDecoration(
+                  labelText: "Cookie",
+                  hintText: "粘贴 www.douyu.com 的完整 Cookie",
+                  alignLabelWithHint: true,
+                  floatingLabelBehavior: FloatingLabelBehavior.always,
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          if (account.hasCookie.value)
+            TextButton(
+              onPressed: () {
+                account.clearCookie();
+                Get.back();
+                SmartDialog.showToast("已清除斗鱼 Cookie，将使用匿名播放");
+              },
+              child: const Text("清除"),
+            ),
+          TextButton(onPressed: () => Get.back(), child: const Text("取消")),
+          TextButton(
+            onPressed: () {
+              final cookie = _normalizeCookieInput(controller.text);
+              account.setCookie(cookie);
+              Get.back();
+              SmartDialog.showToast(
+                cookie.isEmpty ? "已清除斗鱼 Cookie，将使用匿名播放" : "斗鱼 Cookie 已保存",
+              );
+            },
+            child: const Text("保存"),
+          ),
+        ],
+      ),
+    ).whenComplete(controller.dispose);
   }
 
   void douyinLogin() {
@@ -329,6 +387,8 @@ class AccountController extends GetxController {
                 decoration: const InputDecoration(
                   labelText: "Cookie",
                   hintText: "粘贴 live.kuaishou.com 的完整 Cookie",
+                  alignLabelWithHint: true,
+                  floatingLabelBehavior: FloatingLabelBehavior.always,
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -753,6 +813,20 @@ class AccountController extends GetxController {
       return "已配置 Cookie（${cookie.length} 字符），预计有效期已过";
     }
     return "已配置 Cookie（${cookie.length} 字符），预计剩余 ${_formatDurationShort(remain)}";
+  }
+
+  String getDouyuCookieSummaryText() {
+    // This getter is used inside Obx on the account page.  Keep the
+    // dependency on the observable flag so GetX can rebuild the row after a
+    // cookie is saved or cleared.  Reading only the plain cached `cookie`
+    // field makes Obx throw an "improper use" error; in release builds that
+    // error is rendered as a full-height gray RenderErrorBox on desktop.
+    final account = DouyuAccountService.instance;
+    final hasCookie = account.hasCookie.value;
+    final cookie = account.cookie;
+    return !hasCookie || cookie.isEmpty
+        ? "未配置，匿名高画质可能约 10 分钟断流"
+        : "已配置登录 Cookie（${cookie.length} 字符）";
   }
 
   String _currentKuaishouCredentialsText() {

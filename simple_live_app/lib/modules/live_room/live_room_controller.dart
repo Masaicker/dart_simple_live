@@ -30,6 +30,7 @@ import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/services/current_room_service.dart';
 import 'package:simple_live_app/services/db_service.dart';
+import 'package:simple_live_app/services/ios_audio_session_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/services/live_subtitle_service.dart';
 import 'package:simple_live_app/services/mpv_options_service.dart';
@@ -38,6 +39,7 @@ import 'package:simple_live_app/widgets/desktop_refresh_button.dart';
 import 'package:simple_live_app/widgets/follow_user_item.dart';
 import 'package:simple_live_app/widgets/net_image.dart';
 import 'package:simple_live_app/widgets/settings/settings_card.dart';
+import 'package:simple_live_app/widgets/settings/settings_action.dart';
 import 'package:simple_live_app/widgets/settings/settings_switch.dart';
 import 'package:simple_live_app/widgets/status/app_empty_widget.dart';
 import 'package:simple_live_core/simple_live_core.dart';
@@ -98,6 +100,11 @@ class LiveRoomController extends PlayerController
   RxList<LiveRepeatedDanmuSummary> liveEventFlows =
       RxList<LiveRepeatedDanmuSummary>();
   bool _autoSwitchingRoom = false;
+
+  /// 连续“未开播”自动换台保护：防止状态接口异常时无限换台
+  int _autoSwitchOfflineHops = 0;
+  DateTime? _firstOfflineHopAt;
+  static const int _maxAutoSwitchOfflineHops = 3;
   bool _roomSwitching = false;
   Site? _pendingRoomSite;
   String? _pendingRoomId;
@@ -184,6 +191,15 @@ class LiveRoomController extends PlayerController
   bool get _allowBackgroundPlayback =>
       AppSettingsController.instance.allowBackgroundPlayback.value;
 
+  @override
+  bool get isAppBackground => isBackground;
+
+  @override
+  String get playbackTitle => detail.value?.userName ?? site.name;
+
+  @override
+  String get playbackSubtitle => detail.value?.title ?? '';
+
   /// 直播间加载是否失败
   var loadError = false.obs;
   Object? error;
@@ -194,6 +210,12 @@ class LiveRoomController extends PlayerController
   Timer? _liveDurationTimer;
   StreamSubscription<Duration>? _positionSubscription;
   Duration _lastKnownPlayerPosition = Duration.zero;
+  Timer? _playbackWatchdog;
+  Duration? _lastWatchdogPosition;
+  int _stallSampleCount = 0;
+  int _bufferingSampleCount = 0;
+  bool _watchdogRefreshing = false;
+  DateTime? _lastWatchdogRefreshAt;
   Duration? _positionBeforeBackground;
   DateTime? _backgroundedAt;
   Duration? _positionBeforeWindowBlur;
@@ -249,6 +271,8 @@ class LiveRoomController extends PlayerController
     _positionSubscription = player.stream.position.listen((event) {
       _lastKnownPlayerPosition = event;
     });
+    _iosAudioEventSubscription = IosAudioSessionService.instance.events
+        .listen(_handleIosAudioEvent);
   }
 
   void scrollListener() {
@@ -1367,6 +1391,7 @@ class LiveRoomController extends PlayerController
     clearDanmakuReplayHistory();
     _liveDurationTimer?.cancel();
     _positionSubscription?.cancel();
+    _iosAudioEventSubscription?.cancel();
     unawaited(
       AppSettingsController.instance.setLastLiveRoomResumePending(false),
     );
@@ -1611,7 +1636,10 @@ class LiveRoomController extends PlayerController
       _restartOnlineRefreshTimer();
       unawaited(syncAutoPipOnLeave());
       if (liveStatus.value) {
+        _autoSwitchOfflineHops = 0;
         getPlayQualites();
+      } else {
+        _scheduleAutoSwitchFromOfflineRoom(loadGeneration);
       }
       if (detail.value!.isRecord) {
         addSysMsg("当前主播未开播，正在转播录像");
@@ -1692,8 +1720,7 @@ class LiveRoomController extends PlayerController
         currentQuality = playQualites.length - 1;
       } else if (qualityLevel == 3) {
         // 记住上次：按名称精确匹配，名称不存在时按偏移兜底。
-        final memory =
-            AppSettingsController.instance.getQualityMemory(site.id);
+        final memory = AppSettingsController.instance.getQualityMemory(site.id);
         if (memory != null) {
           final resolved = QualityMemory.resolveIndex(
             qualities: playQualites,
@@ -1893,6 +1920,7 @@ class LiveRoomController extends PlayerController
     if (!opened) {
       return;
     }
+    _startPlaybackWatchdog();
     openStopwatch.stop();
     Log.i(
       "播放器打开完成：${site.id}/$roomId ${openStopwatch.elapsedMilliseconds}ms "
@@ -1955,6 +1983,15 @@ class LiveRoomController extends PlayerController
 
   @override
   void mediaEnd() async {
+    final bgTaskId = await _beginPlaybackReconnectTask("live_end");
+    try {
+      await _mediaEndBody();
+    } finally {
+      await _endPlaybackReconnectTask(bgTaskId);
+    }
+  }
+
+  Future<void> _mediaEndBody() async {
     final loadGeneration = _loadGeneration;
     final mediaGeneration = _playbackMediaGeneration;
     if (!_isPlaybackEventCurrent(loadGeneration, mediaGeneration)) {
@@ -1996,6 +2033,15 @@ class LiveRoomController extends PlayerController
   int mediaErrorRetryCount = 0;
   @override
   void mediaError(String error) async {
+    final bgTaskId = await _beginPlaybackReconnectTask("playback_error");
+    try {
+      await _mediaErrorBody(error);
+    } finally {
+      await _endPlaybackReconnectTask(bgTaskId);
+    }
+  }
+
+  Future<void> _mediaErrorBody(String error) async {
     final loadGeneration = _loadGeneration;
     final mediaGeneration = _playbackMediaGeneration;
     if (!_isPlaybackEventCurrent(loadGeneration, mediaGeneration)) {
@@ -2033,46 +2079,141 @@ class LiveRoomController extends PlayerController
     }
   }
 
+  StreamSubscription<IosAudioSessionEvent>? _iosAudioEventSubscription;
+  bool _iosInterrupted = false;
+
+  Future<int> _beginPlaybackReconnectTask(String reason) async {
+    if (!Platform.isIOS) {
+      return -1;
+    }
+    return IosAudioSessionService.instance
+        .beginBackgroundTask("playback_reconnect_$reason");
+  }
+
+  Future<void> _endPlaybackReconnectTask(int taskId) async {
+    if (taskId < 0) {
+      return;
+    }
+    await IosAudioSessionService.instance.endBackgroundTask(taskId);
+  }
+
+  Future<void> _handleIosAudioEvent(IosAudioSessionEvent event) async {
+    if (_roomDisposed) {
+      return;
+    }
+    switch (event.type) {
+      case IosAudioEventType.interruptionBegan:
+        _iosInterrupted = true;
+        await player.pause();
+        break;
+      case IosAudioEventType.interruptionEnded:
+        if (!_iosInterrupted) {
+          return;
+        }
+        _iosInterrupted = false;
+        if (!event.shouldResume) {
+          return;
+        }
+        if (player.state.completed || playbackReconnecting) {
+          await setPlayer(refreshUrls: _shouldRefreshUrlsOnPlaybackRetry);
+        } else if (!player.state.playing) {
+          await player.play();
+        }
+        break;
+      case IosAudioEventType.routeChange:
+        if (event.shouldPause && player.state.playing) {
+          await player.pause();
+        }
+        break;
+    }
+  }
+
+  /// 房间打开后发现未开播时，若开启了任一自动切换开关，
+  /// 延迟片刻后检索下一个正在直播的关注房间。
+  /// 覆盖“观看记录进入已关播房间”“自动切换落在刚下播的房间”两种卡在未开播页面的场景。
+  void _scheduleAutoSwitchFromOfflineRoom(int loadGeneration) {
+    final settings = AppSettingsController.instance;
+    if (!(settings.autoSwitchNextOnLiveEnd.value ||
+        settings.autoSwitchNextOnPlaybackFailure.value)) {
+      return;
+    }
+    if (_autoSwitchingRoom) {
+      return;
+    }
+    final now = DateTime.now();
+    if (_firstOfflineHopAt == null ||
+        now.difference(_firstOfflineHopAt!) >= const Duration(minutes: 5)) {
+      _autoSwitchOfflineHops = 0;
+      _firstOfflineHopAt = now;
+    }
+    if (_autoSwitchOfflineHops >= _maxAutoSwitchOfflineHops) {
+      return;
+    }
+    Future.delayed(const Duration(seconds: 2), () async {
+      if (_roomDisposed || !_isCurrentLoad(loadGeneration)) {
+        return;
+      }
+      if (liveStatus.value || _autoSwitchingRoom) {
+        return;
+      }
+      await _tryAutoSwitchToNextLiveRoom(reason: "room_offline");
+    });
+  }
+
   Future<void> _tryAutoSwitchToNextLiveRoom({required String reason}) async {
     final settings = AppSettingsController.instance;
-    final enabled = reason == "live_end"
-        ? settings.autoSwitchNextOnLiveEnd.value
-        : settings.autoSwitchNextOnPlaybackFailure.value;
+    final enabled = switch (reason) {
+      "live_end" => settings.autoSwitchNextOnLiveEnd.value,
+      "playback_failure" => settings.autoSwitchNextOnPlaybackFailure.value,
+      // 未开播房间：任一开关开启即检索，保持与“关播/播放失败后自动换台”一致的体验
+      _ =>
+        settings.autoSwitchNextOnLiveEnd.value ||
+            settings.autoSwitchNextOnPlaybackFailure.value,
+    };
     if (!enabled || _autoSwitchingRoom) {
       return;
     }
 
-    final liveChannels = FollowService.instance.sortFollowUsers(
-      FollowService.instance.liveList,
+    final candidates = FollowService.instance.sortFollowUsers(
+      FollowService.instance.followList,
     );
-    if (liveChannels.isEmpty) {
-      return;
-    }
-
-    final currentId = "${site.id}_$roomId";
-    final currentIndex =
-        liveChannels.indexWhere((item) => item.id == currentId);
-    final candidates =
-        liveChannels.where((item) => item.id != currentId).toList();
     if (candidates.isEmpty) {
       return;
     }
 
-    FollowUser target;
-    if (currentIndex < 0 || currentIndex >= liveChannels.length - 1) {
-      target = candidates.first;
-    } else {
-      target = liveChannels[currentIndex + 1];
-      if (target.id == currentId) {
-        target = candidates.first;
+    final currentId = "${site.id}_$roomId";
+    final currentIndex = candidates.indexWhere((item) => item.id == currentId);
+    final ordered = <FollowUser>[
+      if (currentIndex >= 0) ...candidates.skip(currentIndex + 1),
+      ...candidates,
+    ].where((item) => item.id != currentId).toList();
+    FollowUser? target;
+    for (final candidate in ordered) {
+      try {
+        if (await Sites.allSites[candidate.siteId]!.liveSite
+            .getLiveStatus(roomId: candidate.roomId)) {
+          target = candidate;
+          break;
+        }
+      } catch (e, stackTrace) {
+        Log.e("检查自动切换候选直播状态失败：${candidate.id}", stackTrace);
       }
+    }
+    if (target == null) {
+      SmartDialog.showToast("没有找到正在直播的下一个直播间");
+      return;
     }
 
     _autoSwitchingRoom = true;
     try {
-      SmartDialog.showToast(
-        reason == "live_end" ? "当前直播已结束，已切换到下一个直播间" : "当前直播播放失败，已切换到下一个直播间",
-      );
+      SmartDialog.showToast(switch (reason) {
+        "live_end" => "当前直播已结束，已切换到下一个直播间",
+        "playback_failure" => "当前直播播放失败，已切换到下一个直播间",
+        _ => "当前直播间未开播，已切换到下一个直播间",
+      });
+      if (reason == "room_offline") {
+        _autoSwitchOfflineHops += 1;
+      }
       resetRoom(Sites.allSites[target.siteId]!, target.roomId);
     } finally {
       _autoSwitchingRoom = false;
@@ -2343,6 +2484,15 @@ class LiveRoomController extends PlayerController
                     onChanged: settings.setAllowBackgroundPlayback,
                   ),
                 ),
+                if (Platform.isAndroid || Platform.isIOS) AppStyle.divider,
+                if (Platform.isAndroid || Platform.isIOS)
+                  SettingsAction(
+                    title: "后台保活设置指引",
+                    subtitle: "设置自启动与电池白名单，避免后台被清理",
+                    onTap: () => Get.toNamed(
+                      RoutePath.kSettingsBackgroundKeepalive,
+                    ),
+                  ),
                 AppStyle.divider,
                 Obx(
                   () => SettingsSwitch(
@@ -3391,6 +3541,7 @@ ${errorStackTrace ?? ""}''');
           ),
         );
       }
+      unawaited(syncBackgroundPlayback());
     } else if (state == AppLifecycleState.resumed) {
       Log.d("返回前台");
       _refreshAutoExitCountdown();
@@ -3399,6 +3550,7 @@ ${errorStackTrace ?? ""}''');
         AppSettingsController.instance.setLastLiveRoomResumePending(false),
       );
       _refreshDanmakuOverlay("返回前台");
+      unawaited(syncBackgroundPlayback());
       var backgroundedAt = _backgroundedAt;
       var positionBeforeBackground = _positionBeforeBackground;
       _backgroundedAt = null;
@@ -3451,6 +3603,80 @@ ${errorStackTrace ?? ""}''');
     await setPlayer(refreshUrls: _shouldRefreshUrlsOnPlaybackRetry);
   }
 
+  void _startPlaybackWatchdog() {
+    _playbackWatchdog?.cancel();
+    _lastWatchdogPosition = null;
+    _stallSampleCount = 0;
+    _bufferingSampleCount = 0;
+    _playbackWatchdog = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (!liveStatus.value ||
+          player.state.completed ||
+          (isBackground &&
+              (!_allowBackgroundPlayback || _iosInterrupted))) {
+        _lastWatchdogPosition = null;
+        _stallSampleCount = 0;
+        _bufferingSampleCount = 0;
+        return;
+      }
+      if (!player.state.playing) {
+        _lastWatchdogPosition = null;
+        _stallSampleCount = 0;
+        _bufferingSampleCount = 0;
+        return;
+      }
+      final position = player.state.position;
+      final last = _lastWatchdogPosition;
+      final advanced =
+          last == null || position.inMilliseconds - last.inMilliseconds >= 250;
+      final bufferLead = player.state.buffer - position;
+      final bufferExhausted = bufferLead <= const Duration(milliseconds: 350);
+      if (player.state.buffering || bufferExhausted) {
+        _bufferingSampleCount++;
+      } else {
+        _bufferingSampleCount = 0;
+      }
+      if (!advanced) {
+        _stallSampleCount++;
+      } else {
+        _stallSampleCount = 0;
+      }
+      // Foreground: two samples catch a frozen stream quickly.
+      // Background: network timing is uneven, require more samples.
+      final stallLimit = isBackground ? 4 : 2;
+      final bufferingLimit = isBackground ? 5 : 3;
+      if ((_stallSampleCount >= stallLimit ||
+              _bufferingSampleCount >= bufferingLimit) &&
+          !_watchdogRefreshing &&
+          (_lastWatchdogRefreshAt == null ||
+              DateTime.now().difference(_lastWatchdogRefreshAt!) >=
+                  const Duration(seconds: 8))) {
+        _watchdogRefreshing = true;
+        _lastWatchdogRefreshAt = DateTime.now();
+        _stallSampleCount = 0;
+        _bufferingSampleCount = 0;
+        unawaited(_refreshPlayerFromWatchdog().whenComplete(() {
+          _watchdogRefreshing = false;
+        }));
+      }
+      _lastWatchdogPosition = position;
+    });
+  }
+
+  Future<void> _refreshPlayerFromWatchdog() async {
+    final bgTaskId = await _beginPlaybackReconnectTask("watchdog");
+    try {
+      await setPlayer(
+        refreshUrls: site.id == Constant.kHuya || site.id == Constant.kDouyu,
+      );
+    } catch (e, stackTrace) {
+      Log.e("看门狗刷新失败: $e", stackTrace);
+      SmartDialog.showToast("播放停滞，正在重新连接...");
+      refreshRoom();
+    } finally {
+      await _endPlaybackReconnectTask(bgTaskId);
+    }
+  }
+
   @override
   void onWindowBlur() {
     clearTransientPlayerOverlays();
@@ -3494,6 +3720,7 @@ ${errorStackTrace ?? ""}''');
     if (!(detail.value?.status ?? false) || detail.value?.showTime == null) {
       liveDuration.value = "00:00:00"; // 未开播时显示 00:00:00
       _liveDurationTimer?.cancel();
+      _playbackWatchdog?.cancel();
       return;
     }
 

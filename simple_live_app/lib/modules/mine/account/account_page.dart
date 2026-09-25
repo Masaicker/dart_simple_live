@@ -13,85 +13,92 @@ class AccountPage extends GetView<AccountController> {
       appBar: AppBar(
         title: const Text("账号管理"),
       ),
-      body: ListView(
-        padding: AppStyle.pagePadding(top: 0),
-        children: [
-          const Padding(
-            padding: AppStyle.edgeInsetsA12,
-            child: Text(
-              "哔哩哔哩账号需要登录才能看高清晰度的直播。",
-              textAlign: TextAlign.center,
+      // Keep the account list as the only scrolling viewport.  On desktop,
+      // an unconstrained ListView can inherit the route's remaining height
+      // and leave later rows below an opaque platform surface.
+      body: ColoredBox(
+        color: Theme.of(context).scaffoldBackgroundColor,
+        child: ListView(
+          shrinkWrap: false,
+          physics: const ClampingScrollPhysics(),
+          padding: AppStyle.pagePadding(top: 0),
+          children: [
+            const Padding(
+              padding: AppStyle.edgeInsetsA12,
+              child: Text(
+                "哔哩哔哩账号需要登录才能看高清晰度的直播。",
+                textAlign: TextAlign.center,
+              ),
             ),
-          ),
-          Obx(
-            () => ListTile(
+            Obx(
+              () => ListTile(
+                leading: Image.asset(
+                  'assets/images/bilibili_2.png',
+                  width: 36,
+                  height: 36,
+                ),
+                title: const Text("哔哩哔哩"),
+                subtitle: Text(BiliBiliAccountService.instance.name.value),
+                trailing: BiliBiliAccountService.instance.logined.value
+                    ? const Icon(Icons.logout)
+                    : const Icon(Icons.chevron_right),
+                onTap: controller.bilibiliTap,
+              ),
+            ),
+            Obx(
+              () => ListTile(
+                leading: Image.asset('assets/images/douyu.png',
+                    width: 36, height: 36),
+                title: const Text("斗鱼直播"),
+                subtitle: Text(controller.getDouyuCookieSummaryText()),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: controller.douyuTap,
+              ),
+            ),
+            ListTile(
               leading: Image.asset(
-                'assets/images/bilibili_2.png',
+                'assets/images/huya.png',
                 width: 36,
                 height: 36,
               ),
-              title: const Text("哔哩哔哩"),
-              subtitle: Text(BiliBiliAccountService.instance.name.value),
-              trailing: BiliBiliAccountService.instance.logined.value
-                  ? const Icon(Icons.logout)
-                  : const Icon(Icons.chevron_right),
-              onTap: controller.bilibiliTap,
-            ),
-          ),
-          ListTile(
-            leading: Image.asset(
-              'assets/images/douyu.png',
-              width: 36,
-              height: 36,
-            ),
-            title: const Text("斗鱼直播"),
-            subtitle: const Text("无需登录"),
-            enabled: false,
-            trailing: const Icon(Icons.chevron_right),
-          ),
-          ListTile(
-            leading: Image.asset(
-              'assets/images/huya.png',
-              width: 36,
-              height: 36,
-            ),
-            title: const Text("虎牙直播"),
-            subtitle: const Text("无需登录"),
-            enabled: false,
-            trailing: const Icon(Icons.chevron_right),
-          ),
-          Obx(
-            () => ListTile(
-              leading: Image.asset(
-                'assets/images/douyin.png',
-                width: 36,
-                height: 36,
-              ),
-              title: const Text("抖音直播"),
-              subtitle: Text(controller.getDouyinCookieSummaryText()),
+              title: const Text("虎牙直播"),
+              subtitle: const Text("无需登录"),
+              enabled: false,
               trailing: const Icon(Icons.chevron_right),
-              onTap: controller.douyinTap,
             ),
-          ),
-          Obx(
-            () => ListTile(
-              leading: Image.asset(
-                'assets/images/kuaishou.png',
-                width: 36,
-                height: 36,
+            Obx(
+              () => ListTile(
+                leading: Image.asset(
+                  'assets/images/douyin.png',
+                  width: 36,
+                  height: 36,
+                ),
+                title: const Text("抖音直播"),
+                subtitle: Text(controller.getDouyinCookieSummaryText()),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: controller.douyinTap,
               ),
-              title: const Text("快手直播"),
-              subtitle: Text(controller.getKuaishouCookieSummaryText()),
-              trailing: controller.canUseKuaishouWebLogin
-                  ? TextButton(
-                      onPressed: controller.kuaishouWebLogin,
-                      child: const Text("网页登录"),
-                    )
-                  : const Icon(Icons.chevron_right),
-              onTap: controller.kuaishouTap,
             ),
-          ),
-        ],
+            Obx(
+              () => ListTile(
+                leading: Image.asset(
+                  'assets/images/kuaishou.png',
+                  width: 36,
+                  height: 36,
+                ),
+                title: const Text("快手直播"),
+                subtitle: Text(controller.getKuaishouCookieSummaryText()),
+                trailing: controller.canUseKuaishouWebLogin
+                    ? TextButton(
+                        onPressed: controller.kuaishouWebLogin,
+                        child: const Text("网页登录"),
+                      )
+                    : const Icon(Icons.chevron_right),
+                onTap: controller.kuaishouTap,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

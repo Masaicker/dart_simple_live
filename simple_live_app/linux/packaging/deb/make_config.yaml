@@ -12,6 +12,15 @@ dependencies:
   - libmpv2
   - libepoxy0
   - libasound2t64 | libasound2
+  # OpenGL user-space + Mesa software renderer (llvmpipe).
+  # media_kit / Flutter GTK compositor need these; on bare/de-mined
+  # installs or half-configured NVIDIA stacks the EGL/GLX context fails
+  # with "Couldn't find current GLX or EGL context". Pulling them here
+  # also makes LIBGL_ALWAYS_SOFTWARE=1 fallback actually work.
+  - libgl1
+  - libegl1
+  - libglx0
+  - libgl1-mesa-dri
 icon: assets/logo.png
 
 keywords:

@@ -11,6 +11,7 @@ import 'package:simple_live_app/modules/live_room/live_room_page.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_controller.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_models.dart';
 import 'package:simple_live_app/modules/multi_room/multi_room_page.dart';
+import 'package:simple_live_app/modules/settings/background_keepalive/background_keepalive_page.dart';
 import 'package:simple_live_app/modules/settings/follow_settings_page.dart';
 import 'package:simple_live_app/modules/sync/profile_backup/profile_backup_controller.dart';
 import 'package:simple_live_app/modules/sync/profile_backup/profile_backup_page.dart';
@@ -176,6 +177,11 @@ class AppPages {
     GetPage(
       name: RoutePath.kSettingsPlay,
       page: () => const PlaySettingsPage(),
+    ),
+    //后台保活设置指引
+    GetPage(
+      name: RoutePath.kSettingsBackgroundKeepalive,
+      page: () => const BackgroundKeepalivePage(),
     ),
     //多开设置
     GetPage(

@@ -164,3 +164,8 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // MediaSessionCompat / MediaStyle for the background playback service.
+    implementation("androidx.media:media:1.7.0")
+}

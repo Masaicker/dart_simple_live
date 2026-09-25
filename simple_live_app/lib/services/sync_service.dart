@@ -12,6 +12,7 @@ import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/services/bilibili_account_service.dart';
 import 'package:simple_live_app/services/bulk_data_import_service.dart';
 import 'package:simple_live_app/services/douyin_account_service.dart';
+import 'package:simple_live_app/services/douyu_account_service.dart';
 import 'package:simple_live_app/services/profile_backup_service.dart';
 import 'package:simple_live_app/widgets/sync_progress_dialog.dart';
 import 'package:simple_live_core/simple_live_core.dart';
@@ -224,6 +225,7 @@ class SyncService extends GetxService {
       serverRouter.post('/sync/profile', _syncProfileReuqest);
       serverRouter.post('/sync/account/bilibili', _syncBiliAccountReuqest);
       serverRouter.post('/sync/account/douyin', _syncDouyinAccountReuqest);
+      serverRouter.post('/sync/account/douyu', _syncDouyuAccountReuqest);
 
       server = await shelf_io.serve(
         serverRouter,
@@ -587,6 +589,23 @@ class SyncService extends GetxService {
         'status': false,
         'message': e.toString(),
       });
+    }
+  }
+
+  Future<shelf.Response> _syncDouyuAccountReuqest(
+      shelf.Request request) async {
+    try {
+      final body = await request.readAsString();
+      final jsonBody = json.decode(body);
+      if (jsonBody is! Map) {
+        throw const FormatException("账号数据格式不是对象");
+      }
+      final cookie = jsonBody['cookie']?.toString() ?? "";
+      DouyuAccountService.instance.setCookie(cookie);
+      SmartDialog.showToast(cookie.isEmpty ? '已清除斗鱼账号' : '已同步斗鱼账号');
+      return toJsonResponse({'status': true, 'message': 'success'});
+    } catch (e) {
+      return toJsonResponse({'status': false, 'message': e.toString()});
     }
   }
 

@@ -30,6 +30,7 @@ import 'package:simple_live_tv_app/services/bilibili_account_service.dart';
 import 'package:simple_live_tv_app/services/crash_report_service.dart';
 import 'package:simple_live_tv_app/services/current_room_service.dart';
 import 'package:simple_live_tv_app/services/db_service.dart';
+import 'package:simple_live_tv_app/services/douyu_account_service.dart';
 import 'package:simple_live_tv_app/services/douyin_account_service.dart';
 import 'package:simple_live_tv_app/services/follow_user_service.dart';
 import 'package:simple_live_tv_app/services/kuaishou_account_service.dart';
@@ -250,6 +251,7 @@ Future initServices() async {
   Get.put(AppSettingsController());
 
   Get.put(BiliBiliAccountService());
+  Get.put(DouyuAccountService());
   Get.put(DouyinAccountService());
   Get.put(KuaishouAccountService());
   Get.put(ProfileBackupService());
