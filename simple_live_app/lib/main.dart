@@ -527,6 +527,7 @@ class MyApp extends StatelessWidget {
       MethodChannel("simple_live/desktop_shortcuts");
   static bool _desktopShortcutHandlerBound = false;
   static bool? _desktopShortcutCaptureEnabled;
+  static bool? _imeDiagnosticsEnabled;
   static bool? _lastEditableTextFocus;
   static bool _snapshotOnNextEditableKey = false;
 
@@ -712,6 +713,21 @@ class MyApp extends StatelessWidget {
     if (!_isDesktopPlatform) {
       return;
     }
+    if (Platform.isWindows) {
+      final diagnosticsEnabled =
+          AppSettingsController.instance.logEnable.value;
+      if (_imeDiagnosticsEnabled != diagnosticsEnabled) {
+        _imeDiagnosticsEnabled = diagnosticsEnabled;
+        try {
+          await _desktopShortcutChannel.invokeMethod(
+            "setImeDiagnosticsEnabled",
+            diagnosticsEnabled,
+          );
+        } catch (e) {
+          Log.d("输入法诊断状态同步失败: $e");
+        }
+      }
+    }
     final editableTextFocused = _hasEditableTextFocus;
     if (Platform.isWindows &&
         _lastEditableTextFocus != editableTextFocused) {
@@ -884,6 +900,10 @@ class MyApp extends StatelessWidget {
       _snapshotOnNextEditableKey = true;
       _logDesktopImeDiagnostic(
           "Windows input layout changed: ${call.arguments}");
+      return null;
+    }
+    if (call.method == "imeWindowMessage") {
+      _logDesktopImeDiagnostic("Flutter view message: ${call.arguments}");
       return null;
     }
     if (call.method == "inputLanguageSnapshot") {

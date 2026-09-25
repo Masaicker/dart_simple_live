@@ -4,6 +4,7 @@
 #include <string>
 #include <utility>
 
+#include <commctrl.h>
 #include <imm.h>
 #include <flutter/standard_method_codec.h>
 
@@ -77,10 +78,21 @@ bool FlutterWindow::OnCreate() {
           result->Success(flutter::EncodableValue(CurrentInputState()));
           return;
         }
+        if (call.method_name() == "setImeDiagnosticsEnabled") {
+          if (const auto* enabled = std::get_if<bool>(call.arguments())) {
+            ime_diagnostics_enabled_ = *enabled;
+          }
+          result->Success();
+          return;
+        }
         result->NotImplemented();
       });
   ConfigureWindowChromeChannel();
-  SetChildContent(flutter_controller_->view()->GetNativeWindow());
+  const HWND flutter_view = flutter_controller_->view()->GetNativeWindow();
+  SetChildContent(flutter_view);
+  flutter_view_subclass_installed_ =
+      SetWindowSubclass(flutter_view, FlutterViewSubclassProc, 1,
+                        reinterpret_cast<DWORD_PTR>(this)) != FALSE;
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     this->Show();
@@ -154,6 +166,11 @@ void FlutterWindow::RestoreWindowChrome() {
 }
 
 void FlutterWindow::OnDestroy() {
+  if (flutter_view_subclass_installed_ && flutter_controller_) {
+    RemoveWindowSubclass(flutter_controller_->view()->GetNativeWindow(),
+                         FlutterViewSubclassProc, 1);
+    flutter_view_subclass_installed_ = false;
+  }
   shortcut_channel_.reset();
   window_chrome_channel_.reset();
   if (flutter_controller_) {
@@ -165,6 +182,8 @@ void FlutterWindow::OnDestroy() {
 
 std::string FlutterWindow::CurrentInputState() {
   std::string state = "layout=" + CurrentKeyboardLayoutName();
+  state += flutter_view_subclass_installed_ ? " viewHook=true"
+                                            : " viewHook=false";
   const HWND focused = GetFocus();
   if (!focused) {
     return state + " focus=none";
@@ -190,6 +209,74 @@ std::string FlutterWindow::CurrentInputState() {
   }
   ImmReleaseContext(focused, ime_context);
   return state;
+}
+
+LRESULT CALLBACK FlutterWindow::FlutterViewSubclassProc(
+    HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam,
+    UINT_PTR subclass_id, DWORD_PTR reference_data) {
+  auto* window = reinterpret_cast<FlutterWindow*>(reference_data);
+  if (window) {
+    window->LogFlutterViewMessage(message, wparam, lparam);
+  }
+  return DefSubclassProc(hwnd, message, wparam, lparam);
+}
+
+void FlutterWindow::LogFlutterViewMessage(UINT message, WPARAM wparam,
+                                          LPARAM lparam) {
+  if (!ime_diagnostics_enabled_ || !shortcut_channel_) {
+    return;
+  }
+  std::string event;
+  switch (message) {
+    case WM_KEYDOWN:
+    case WM_SYSKEYDOWN:
+      if (wparam == VK_F4 && (GetKeyState(VK_CONTROL) & 0x8000)) {
+        event = "Ctrl+F4 keydown";
+      }
+      break;
+    case WM_SETFOCUS:
+      event = "WM_SETFOCUS";
+      break;
+    case WM_KILLFOCUS:
+      event = "WM_KILLFOCUS";
+      break;
+    case WM_INPUTLANGCHANGE:
+      event = "WM_INPUTLANGCHANGE";
+      break;
+    case WM_IME_SETCONTEXT:
+      event = wparam ? "WM_IME_SETCONTEXT active" : "WM_IME_SETCONTEXT inactive";
+      break;
+    case WM_IME_STARTCOMPOSITION:
+      event = "WM_IME_STARTCOMPOSITION";
+      break;
+    case WM_IME_COMPOSITION:
+      event = "WM_IME_COMPOSITION";
+      if (lparam & GCS_COMPSTR) event += " composing";
+      if (lparam & GCS_RESULTSTR) event += " result";
+      break;
+    case WM_IME_ENDCOMPOSITION:
+      event = "WM_IME_ENDCOMPOSITION";
+      break;
+    case WM_IME_NOTIFY:
+      if (wparam == IMN_SETOPENSTATUS) {
+        event = "IMN_SETOPENSTATUS";
+      } else if (wparam == IMN_SETCONVERSIONMODE) {
+        event = "IMN_SETCONVERSIONMODE";
+      } else if (wparam == IMN_OPENCANDIDATE) {
+        event = "IMN_OPENCANDIDATE";
+      } else if (wparam == IMN_CLOSECANDIDATE) {
+        event = "IMN_CLOSECANDIDATE";
+      }
+      break;
+    default:
+      return;
+  }
+  if (event.empty()) {
+    return;
+  }
+  shortcut_channel_->InvokeMethod(
+      "imeWindowMessage",
+      std::make_unique<flutter::EncodableValue>(event + " " + CurrentInputState()));
 }
 
 LRESULT
