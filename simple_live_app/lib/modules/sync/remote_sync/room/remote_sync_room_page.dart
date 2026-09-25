@@ -211,6 +211,34 @@ class RemoteSyncRoomPage extends GetView<RemoteSyncRoomController> {
                     controller.syncBiliAccount();
                   },
                 ),
+                AppStyle.divider,
+                ListTile(
+                  leading: Image.asset('assets/images/douyu.png',
+                      width: 36, height: 36),
+                  title: const Text("发送斗鱼账号"),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    controller.syncDouyuAccount();
+                  },
+                ),
+                AppStyle.divider,
+                ListTile(
+                  leading: const Icon(Icons.music_note),
+                  title: const Text("发送抖音账号"),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    controller.syncDouyinAccount();
+                  },
+                ),
+                AppStyle.divider,
+                ListTile(
+                  leading: const Icon(Icons.account_circle_outlined),
+                  title: const Text("发送快手账号"),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    controller.syncKuaishouAccount();
+                  },
+                ),
               ],
             ),
           ),

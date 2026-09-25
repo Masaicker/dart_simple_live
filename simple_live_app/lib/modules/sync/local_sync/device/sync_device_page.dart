@@ -94,6 +94,17 @@ class SyncDevicePage extends GetView<SyncDeviceController> {
                     controller.syncKuaishouAccount();
                   },
                 ),
+                AppStyle.divider,
+                ListTile(
+                  leading: Image.asset('assets/images/douyu.png',
+                      width: 36, height: 36),
+                  title: const Text("同步斗鱼账号"),
+                  subtitle: const Text("给 TV 等设备同步网页登录 Cookie"),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    controller.syncDouyuAccount();
+                  },
+                ),
               ],
             ),
           ),

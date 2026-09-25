@@ -11,6 +11,7 @@ import 'package:simple_live_app/services/bilibili_account_service.dart';
 import 'package:simple_live_app/services/bulk_data_import_service.dart';
 import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/douyin_account_service.dart';
+import 'package:simple_live_app/services/douyu_account_service.dart';
 import 'package:simple_live_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_app/services/profile_backup_service.dart';
 import 'package:simple_live_app/services/sync_service.dart';
@@ -243,6 +244,25 @@ class SyncDeviceController extends BaseController {
     } catch (e) {
       SmartDialog.showToast("同步失败：${exceptionToString(e)}");
       Log.e("同步抖音账号失败：$e", StackTrace.current);
+    } finally {
+      SyncProgressDialog.dismiss();
+    }
+  }
+
+  void syncDouyuAccount() async {
+    try {
+      if (!DouyuAccountService.instance.hasCookie.value) {
+        SmartDialog.showToast("未配置斗鱼 Cookie");
+        return;
+      }
+      SyncProgressDialog.show(const SyncProgress(stage: "同步斗鱼账号"));
+
+      await request.syncDouyuAccount(
+          client, DouyuAccountService.instance.cookie);
+      SmartDialog.showToast("已同步斗鱼账号");
+    } catch (e) {
+      SmartDialog.showToast("同步失败：${exceptionToString(e)}");
+      Log.e("同步斗鱼账号失败：$e", StackTrace.current);
     } finally {
       SyncProgressDialog.dismiss();
     }

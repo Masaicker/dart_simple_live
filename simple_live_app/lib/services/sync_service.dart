@@ -13,6 +13,7 @@ import 'package:simple_live_app/services/bilibili_account_service.dart';
 import 'package:simple_live_app/services/bulk_data_import_service.dart';
 import 'package:simple_live_app/services/douyin_account_service.dart';
 import 'package:simple_live_app/services/douyu_account_service.dart';
+import 'package:simple_live_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_app/services/profile_backup_service.dart';
 import 'package:simple_live_app/widgets/sync_progress_dialog.dart';
 import 'package:simple_live_core/simple_live_core.dart';
@@ -226,6 +227,7 @@ class SyncService extends GetxService {
       serverRouter.post('/sync/account/bilibili', _syncBiliAccountReuqest);
       serverRouter.post('/sync/account/douyin', _syncDouyinAccountReuqest);
       serverRouter.post('/sync/account/douyu', _syncDouyuAccountReuqest);
+      serverRouter.post('/sync/account/kuaishou', _syncKuaishouAccountReuqest);
 
       server = await shelf_io.serve(
         serverRouter,
@@ -603,6 +605,34 @@ class SyncService extends GetxService {
       final cookie = jsonBody['cookie']?.toString() ?? "";
       DouyuAccountService.instance.setCookie(cookie);
       SmartDialog.showToast(cookie.isEmpty ? '已清除斗鱼账号' : '已同步斗鱼账号');
+      return toJsonResponse({'status': true, 'message': 'success'});
+    } catch (e) {
+      return toJsonResponse({'status': false, 'message': e.toString()});
+    }
+  }
+
+  Future<shelf.Response> _syncKuaishouAccountReuqest(
+      shelf.Request request) async {
+    try {
+      final body = await request.readAsString();
+      final jsonBody = json.decode(body);
+      if (jsonBody is! Map) {
+        throw const FormatException("账号数据格式不是对象");
+      }
+      final cookie = jsonBody['cookie']?.toString() ?? "";
+      if (cookie.isEmpty) {
+        throw const FormatException("账号 Cookie 为空");
+      }
+      final kww = jsonBody['kww']?.toString() ?? "";
+      final expiresAtMs = (jsonBody['cookieExpiresAt'] as num?)?.toInt() ?? 0;
+      KuaishouAccountService.instance.setCookie(
+        cookie,
+        kww: kww.isEmpty ? null : kww,
+        expiresAt: expiresAtMs > 0
+            ? DateTime.fromMillisecondsSinceEpoch(expiresAtMs)
+            : null,
+      );
+      SmartDialog.showToast('已同步快手账号');
       return toJsonResponse({'status': true, 'message': 'success'});
     } catch (e) {
       return toJsonResponse({'status': false, 'message': e.toString()});

@@ -41,7 +41,7 @@ class SyncServerProbeResult {
 
 class SignalRService {
   static const int kRoomIdLength = 6;
-  static const String kDefaultUrl = "wss://sync.furry.mo.cn/sync";
+  static const String kDefaultUrl = "wss://june6699.top/sync";
   static const String kCloudflareUrl =
       "wss://simple-live-sync.3439394104.workers.dev/sync";
   static const String kDefaultServerOption = "自建服务器（默认）";
@@ -81,6 +81,21 @@ class SignalRService {
       StreamController<RoomSyncPayload>.broadcast();
   Stream<RoomSyncPayload> get onBiliAccountStream =>
       _onBiliAccountStreamController.stream;
+
+  final _onDouyuAccountStreamController =
+      StreamController<RoomSyncPayload>.broadcast();
+  Stream<RoomSyncPayload> get onDouyuAccountStream =>
+      _onDouyuAccountStreamController.stream;
+
+  final _onDouyinAccountStreamController =
+      StreamController<RoomSyncPayload>.broadcast();
+  Stream<RoomSyncPayload> get onDouyinAccountStream =>
+      _onDouyinAccountStreamController.stream;
+
+  final _onKuaishouAccountStreamController =
+      StreamController<RoomSyncPayload>.broadcast();
+  Stream<RoomSyncPayload> get onKuaishouAccountStream =>
+      _onKuaishouAccountStreamController.stream;
 
   final _onRoomDestroyedStreamController = StreamController<String>.broadcast();
   Stream<String> get onRoomDestroyedStream =>
@@ -322,6 +337,9 @@ class SignalRService {
     _onHistoryStreamController.close();
     _onShieldWordStreamController.close();
     _onBiliAccountStreamController.close();
+    _onDouyuAccountStreamController.close();
+    _onDouyinAccountStreamController.close();
+    _onKuaishouAccountStreamController.close();
     _onRoomDestroyedStreamController.close();
     _onRoomUserUpdatedStreamController.close();
     _stopHeartbeat();
@@ -412,6 +430,15 @@ class SignalRService {
           break;
         case "biliAccountReceived":
           _emitBoolString(data, _onBiliAccountStreamController);
+          break;
+        case "douyuAccountReceived":
+          _emitBoolString(data, _onDouyuAccountStreamController);
+          break;
+        case "douyinAccountReceived":
+          _emitBoolString(data, _onDouyinAccountStreamController);
+          break;
+        case "kuaishouAccountReceived":
+          _emitBoolString(data, _onKuaishouAccountStreamController);
           break;
         case "roomDestroyed":
           _onRoomDestroyedStreamController
@@ -555,6 +582,12 @@ class SignalRService {
         return "sendShieldWord";
       case "SendBiliAccount":
         return "sendBiliAccount";
+      case "SendDouyuAccount":
+        return "sendDouyuAccount";
+      case "SendDouyinAccount":
+        return "sendDouyinAccount";
+      case "SendKuaishouAccount":
+        return "sendKuaishouAccount";
       default:
         return action;
     }

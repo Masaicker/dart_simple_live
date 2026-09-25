@@ -15,6 +15,9 @@ import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/services/bilibili_account_service.dart';
 import 'package:simple_live_app/services/bulk_data_import_service.dart';
 import 'package:simple_live_app/services/db_service.dart';
+import 'package:simple_live_app/services/douyin_account_service.dart';
+import 'package:simple_live_app/services/douyu_account_service.dart';
+import 'package:simple_live_app/services/kuaishou_account_service.dart';
 import 'package:simple_live_app/services/signalr_service.dart';
 import 'package:simple_live_app/widgets/sync_progress_dialog.dart';
 import 'package:simple_live_core/simple_live_core.dart';
@@ -33,6 +36,9 @@ class RemoteSyncRoomController extends BaseController {
   StreamSubscription? _onHistorySubscription;
   StreamSubscription? _onShieldWordSubscription;
   StreamSubscription? _onBiliAccountSubscription;
+  StreamSubscription? _onDouyuAccountSubscription;
+  StreamSubscription? _onDouyinAccountSubscription;
+  StreamSubscription? _onKuaishouAccountSubscription;
   var currentRoomId = "--".obs;
   RxList<RoomUser> roomUsers = <RoomUser>[].obs;
   bool get hasValidRoomId =>
@@ -215,6 +221,16 @@ class RemoteSyncRoomController extends BaseController {
     _onBiliAccountSubscription = signalR.onBiliAccountStream.listen((data) {
       onReceiveBiliAccount(data);
     });
+    _onDouyuAccountSubscription = signalR.onDouyuAccountStream.listen((data) {
+      onReceiveDouyuAccount(data);
+    });
+    _onDouyinAccountSubscription = signalR.onDouyinAccountStream.listen((data) {
+      onReceiveDouyinAccount(data);
+    });
+    _onKuaishouAccountSubscription =
+        signalR.onKuaishouAccountStream.listen((data) {
+      onReceiveKuaishouAccount(data);
+    });
   }
 
   SyncProgress _stageProgress(String stage, RoomSyncPayload payload) {
@@ -361,6 +377,67 @@ class RemoteSyncRoomController extends BaseController {
     }
   }
 
+  void onReceiveDouyuAccount(RoomSyncPayload payload) async {
+    try {
+      var jsonBody = json.decode(payload.content);
+      if (jsonBody is! Map) {
+        throw const FormatException("账号数据格式不是对象");
+      }
+      var cookie = jsonBody['cookie']?.toString() ?? "";
+      DouyuAccountService.instance.setCookie(cookie);
+      SmartDialog.showToast(cookie.isEmpty ? '已清除斗鱼账号' : '已同步斗鱼账号');
+    } catch (e) {
+      SmartDialog.showToast("同步失败:$e");
+      Log.logPrint(e);
+    }
+  }
+
+  void onReceiveDouyinAccount(RoomSyncPayload payload) async {
+    try {
+      var jsonBody = json.decode(payload.content);
+      if (jsonBody is! Map) {
+        throw const FormatException("账号数据格式不是对象");
+      }
+      var cookie = jsonBody['cookie']?.toString() ?? "";
+      if (cookie.isEmpty) {
+        DouyinAccountService.instance.clearCookie();
+        SmartDialog.showToast('已清除抖音账号');
+      } else {
+        DouyinAccountService.instance.setCookie(cookie);
+        SmartDialog.showToast('已同步抖音账号');
+      }
+    } catch (e) {
+      SmartDialog.showToast("同步失败:$e");
+      Log.logPrint(e);
+    }
+  }
+
+  void onReceiveKuaishouAccount(RoomSyncPayload payload) async {
+    try {
+      var jsonBody = json.decode(payload.content);
+      if (jsonBody is! Map) {
+        throw const FormatException("账号数据格式不是对象");
+      }
+      var cookie = jsonBody['cookie']?.toString() ?? "";
+      if (cookie.isEmpty) {
+        throw const FormatException("账号 Cookie 为空");
+      }
+      var kww = jsonBody['kww']?.toString() ?? "";
+      final expiresAtMs = (jsonBody['cookieExpiresAt'] as num?)?.toInt() ?? 0;
+      KuaishouAccountService.instance.setCookie(
+        cookie,
+        kww: kww.isEmpty ? null : kww,
+        expiresAt: expiresAtMs > 0
+            ? DateTime.fromMillisecondsSinceEpoch(expiresAtMs)
+            : null,
+      );
+      SmartDialog.showToast('已同步快手账号');
+    } catch (e) {
+      SmartDialog.showToast("同步失败:$e");
+      Log.logPrint(e);
+    }
+  }
+
   Future<bool> showOverlayDialog() async {
     var overlay = await Utils.showAlertDialog(
       "是否覆盖远端数据？",
@@ -492,6 +569,108 @@ class RemoteSyncRoomController extends BaseController {
     }
   }
 
+  void syncDouyuAccount() async {
+    try {
+      if (roomUsers.length <= 1) {
+        SmartDialog.showToast("无设备连接");
+        return;
+      }
+      if (!DouyuAccountService.instance.hasCookie.value) {
+        SmartDialog.showToast("未配置斗鱼 Cookie");
+        return;
+      }
+      SyncProgressDialog.show(const SyncProgress(stage: "发送斗鱼账号"));
+
+      var resp = await signalR.sendContent(
+        roomName: currentRoomId.value,
+        action: "SendDouyuAccount",
+        overlay: true,
+        content: json.encode({
+          "cookie": DouyuAccountService.instance.cookie,
+        }),
+      );
+      if (resp.isSuccess) {
+        SmartDialog.showToast("已发送斗鱼账号");
+      } else {
+        SmartDialog.showToast("发送失败:${resp.message}");
+      }
+    } catch (e) {
+      SmartDialog.showToast("同步失败:$e");
+      Log.logPrint(e);
+    } finally {
+      SyncProgressDialog.dismiss();
+    }
+  }
+
+  void syncDouyinAccount() async {
+    try {
+      if (roomUsers.length <= 1) {
+        SmartDialog.showToast("无设备连接");
+        return;
+      }
+      if (!DouyinAccountService.instance.hasCookie.value) {
+        SmartDialog.showToast("未配置抖音 Cookie");
+        return;
+      }
+      SyncProgressDialog.show(const SyncProgress(stage: "发送抖音账号"));
+
+      var resp = await signalR.sendContent(
+        roomName: currentRoomId.value,
+        action: "SendDouyinAccount",
+        overlay: true,
+        content: json.encode({
+          "cookie": DouyinAccountService.instance.cookie,
+        }),
+      );
+      if (resp.isSuccess) {
+        SmartDialog.showToast("已发送抖音账号");
+      } else {
+        SmartDialog.showToast("发送失败:${resp.message}");
+      }
+    } catch (e) {
+      SmartDialog.showToast("同步失败:$e");
+      Log.logPrint(e);
+    } finally {
+      SyncProgressDialog.dismiss();
+    }
+  }
+
+  void syncKuaishouAccount() async {
+    try {
+      if (roomUsers.length <= 1) {
+        SmartDialog.showToast("无设备连接");
+        return;
+      }
+      final account = KuaishouAccountService.instance;
+      if (!account.hasCookie.value) {
+        SmartDialog.showToast("未配置快手 Cookie");
+        return;
+      }
+      SyncProgressDialog.show(const SyncProgress(stage: "发送快手账号"));
+
+      var resp = await signalR.sendContent(
+        roomName: currentRoomId.value,
+        action: "SendKuaishouAccount",
+        overlay: true,
+        content: json.encode({
+          "cookie": account.cookie,
+          "kww": account.kww,
+          "cookieExpiresAt": account.cookieExpiresAtMs.value,
+        }),
+      );
+      if (resp.isSuccess) {
+        SmartDialog.showToast("已发送快手账号");
+      } else {
+        SmartDialog.showToast("发送失败:${resp.message}");
+      }
+    } catch (e) {
+      SmartDialog.showToast("同步失败:$e");
+      Log.logPrint(e);
+    } finally {
+      SyncProgressDialog.dismiss();
+    }
+  }
+
   void showQRInfo() {
     if (!hasValidRoomId) {
       SmartDialog.showToast("房间号还未创建完成");
@@ -534,6 +713,9 @@ class RemoteSyncRoomController extends BaseController {
     _onHistorySubscription?.cancel();
     _onShieldWordSubscription?.cancel();
     _onBiliAccountSubscription?.cancel();
+    _onDouyuAccountSubscription?.cancel();
+    _onDouyinAccountSubscription?.cancel();
+    _onKuaishouAccountSubscription?.cancel();
     signalR.dispose();
     super.onClose();
   }
