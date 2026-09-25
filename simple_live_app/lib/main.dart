@@ -683,6 +683,14 @@ class MyApp extends StatelessWidget {
         focusContext.findAncestorWidgetOfExactType<EditableText>() != null;
   }
 
+  static void _logDesktopImeDiagnostic(String message) {
+    if (Platform.isWindows && AppSettingsController.instance.logEnable.value) {
+      Log.writeLog(
+          "[IME诊断] ${DateTime.now().toIso8601String()} $message",
+          Level.debug);
+    }
+  }
+
   static Future<void> _syncDesktopShortcutCaptureState() async {
     if (!_isDesktopPlatform) {
       return;
@@ -705,6 +713,9 @@ class MyApp extends StatelessWidget {
 
   Future<void> _handleGlobalShortcut(KeyDownEvent event) async {
     unawaited(_syncDesktopShortcutCaptureState());
+    if (Platform.isWindows && HardwareKeyboard.instance.isMetaPressed) {
+      return;
+    }
     if (_hasEditableTextFocus) {
       return;
     }
@@ -829,6 +840,16 @@ class MyApp extends StatelessWidget {
   Future<dynamic> _handleDesktopShortcutMethod(MethodCall call) async {
     if (call.method == "shortcutCaptureStateRequested") {
       await _syncDesktopShortcutCaptureState();
+      return null;
+    }
+    if (call.method == "inputLanguageChanged") {
+      _logDesktopImeDiagnostic(
+          "Windows input layout changed: ${call.arguments}");
+      return null;
+    }
+    if (call.method == "inputLanguageSnapshot") {
+      _logDesktopImeDiagnostic(
+          "Windows window activated with input layout: ${call.arguments}");
       return null;
     }
     if (call.method != "shortcutKeyDown") {

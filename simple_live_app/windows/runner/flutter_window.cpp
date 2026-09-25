@@ -7,6 +7,18 @@
 #include <flutter/standard_method_codec.h>
 
 #include "flutter/generated_plugin_registrant.h"
+#include "utils.h"
+
+namespace {
+
+std::string CurrentKeyboardLayoutName() {
+  wchar_t layout_name[KL_NAMELENGTH] = {};
+  return GetKeyboardLayoutNameW(layout_name)
+             ? Utf8FromUtf16(layout_name)
+             : "unknown";
+}
+
+}  // namespace
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -157,6 +169,22 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
         return 0;
       }
       break;
+    case WM_INPUTLANGCHANGE:
+      if (shortcut_channel_) {
+        shortcut_channel_->InvokeMethod(
+            "inputLanguageChanged",
+            std::make_unique<flutter::EncodableValue>(
+                CurrentKeyboardLayoutName()));
+      }
+      break;
+    case WM_ACTIVATE:
+      if (LOWORD(wparam) != WA_INACTIVE && shortcut_channel_) {
+        shortcut_channel_->InvokeMethod(
+            "inputLanguageSnapshot",
+            std::make_unique<flutter::EncodableValue>(
+                CurrentKeyboardLayoutName()));
+      }
+      break;
     default:
       break;
   }
@@ -185,6 +213,11 @@ bool FlutterWindow::HandleShortcutKeyDown(WPARAM wparam, LPARAM lparam) {
   // When an editable control has focus, leave every key message to Flutter
   // and the active IME. The Dart side keeps this capture flag in sync.
   if (!shortcut_capture_enabled_) {
+    return false;
+  }
+  // Win+Space belongs to Windows input-method switching, not player shortcuts.
+  if ((GetKeyState(VK_LWIN) & 0x8000) ||
+      (GetKeyState(VK_RWIN) & 0x8000)) {
     return false;
   }
   const std::string key = ShortcutKeyForWindowsKey(wparam, lparam);
