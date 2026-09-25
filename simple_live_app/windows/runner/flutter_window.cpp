@@ -6,6 +6,7 @@
 
 #include <commctrl.h>
 #include <imm.h>
+#include <msctf.h>
 #include <flutter/standard_method_codec.h>
 
 #include "flutter/generated_plugin_registrant.h"
@@ -75,7 +76,7 @@ bool FlutterWindow::OnCreate() {
           return;
         }
         if (call.method_name() == "inputStateSnapshot") {
-          result->Success(flutter::EncodableValue(CurrentInputState()));
+          result->Success(flutter::EncodableValue(CurrentInputState(true)));
           return;
         }
         if (call.method_name() == "setImeDiagnosticsEnabled") {
@@ -90,9 +91,11 @@ bool FlutterWindow::OnCreate() {
   ConfigureWindowChromeChannel();
   const HWND flutter_view = flutter_controller_->view()->GetNativeWindow();
   SetChildContent(flutter_view);
-  flutter_view_subclass_installed_ =
-      SetWindowSubclass(flutter_view, FlutterViewSubclassProc, 1,
-                        reinterpret_cast<DWORD_PTR>(this)) != FALSE;
+  if (GetWindowThreadProcessId(flutter_view, nullptr) == GetCurrentThreadId()) {
+    flutter_view_subclass_installed_ =
+        SetWindowSubclass(flutter_view, FlutterViewSubclassProc, 1,
+                          reinterpret_cast<DWORD_PTR>(this)) != FALSE;
+  }
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     this->Show();
@@ -180,10 +183,55 @@ void FlutterWindow::OnDestroy() {
   Win32Window::OnDestroy();
 }
 
-std::string FlutterWindow::CurrentInputState() {
+unsigned long long CurrentUnixMilliseconds() {
+  FILETIME file_time = {};
+  GetSystemTimeAsFileTime(&file_time);
+  ULARGE_INTEGER ticks = {};
+  ticks.LowPart = file_time.dwLowDateTime;
+  ticks.HighPart = file_time.dwHighDateTime;
+  return (ticks.QuadPart - 116444736000000000ULL) / 10000ULL;
+}
+
+static std::string GuidString(const GUID& guid) {
+  wchar_t buffer[39] = {};
+  return StringFromGUID2(guid, buffer, 39) > 0
+             ? Utf8FromUtf16(buffer)
+             : "unknown";
+}
+
+static std::string CurrentTsfProfile() {
+  ITfInputProcessorProfileMgr* manager = nullptr;
+  const HRESULT create_result = CoCreateInstance(
+      CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
+      IID_ITfInputProcessorProfileMgr,
+      reinterpret_cast<void**>(&manager));
+  if (FAILED(create_result) || !manager) {
+    return "tsfProfile=unavailable hr=" +
+           std::to_string(static_cast<unsigned long>(create_result));
+  }
+  TF_INPUTPROCESSORPROFILE profile = {};
+  const HRESULT profile_result =
+      manager->GetActiveProfile(GUID_TFCAT_TIP_KEYBOARD, &profile);
+  manager->Release();
+  if (FAILED(profile_result)) {
+    return "tsfProfile=unavailable hr=" +
+           std::to_string(static_cast<unsigned long>(profile_result));
+  }
+  return "tsfType=" + std::to_string(profile.dwProfileType) +
+         " tsfLang=" + std::to_string(profile.langid) +
+         " tsfClass=" + GuidString(profile.clsid) +
+         " tsfProfile=" + GuidString(profile.guidProfile);
+}
+
+std::string FlutterWindow::CurrentInputState(bool include_tsf_profile) {
   std::string state = "layout=" + CurrentKeyboardLayoutName();
   state += flutter_view_subclass_installed_ ? " viewHook=true"
                                             : " viewHook=false";
+  state += shortcut_capture_enabled_ ? " shortcutCapture=true"
+                                     : " shortcutCapture=false";
+  if (include_tsf_profile) {
+    state += " " + CurrentTsfProfile();
+  }
   const HWND focused = GetFocus();
   if (!focused) {
     return state + " focus=none";
@@ -204,6 +252,8 @@ std::string FlutterWindow::CurrentInputState() {
   if (ImmGetConversionStatus(ime_context, &conversion, &sentence)) {
     state += (conversion & IME_CMODE_NATIVE) ? " immNativeMode=true"
                                              : " immNativeMode=false";
+    state += " immConversion=" + std::to_string(conversion);
+    state += " immSentence=" + std::to_string(sentence);
   } else {
     state += " immNativeMode=unknown";
   }
@@ -214,6 +264,7 @@ std::string FlutterWindow::CurrentInputState() {
 LRESULT CALLBACK FlutterWindow::FlutterViewSubclassProc(
     HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam,
     UINT_PTR subclass_id, DWORD_PTR reference_data) {
+  (void)subclass_id;
   auto* window = reinterpret_cast<FlutterWindow*>(reference_data);
   if (window) {
     window->LogFlutterViewMessage(message, wparam, lparam);
@@ -232,7 +283,14 @@ void FlutterWindow::LogFlutterViewMessage(UINT message, WPARAM wparam,
     case WM_SYSKEYDOWN:
       if (wparam == VK_F4 && (GetKeyState(VK_CONTROL) & 0x8000)) {
         event = "Ctrl+F4 keydown";
+      } else if ((wparam >= 'A' && wparam <= 'Z') ||
+                 (wparam >= '0' && wparam <= '9')) {
+        event = "printable keydown";
       }
+      break;
+    case WM_CHAR:
+    case WM_UNICHAR:
+      event = "character message";
       break;
     case WM_SETFOCUS:
       event = "WM_SETFOCUS";
@@ -242,6 +300,9 @@ void FlutterWindow::LogFlutterViewMessage(UINT message, WPARAM wparam,
       break;
     case WM_INPUTLANGCHANGE:
       event = "WM_INPUTLANGCHANGE";
+      break;
+    case WM_INPUTLANGCHANGEREQUEST:
+      event = "WM_INPUTLANGCHANGEREQUEST";
       break;
     case WM_IME_SETCONTEXT:
       event = wparam ? "WM_IME_SETCONTEXT active" : "WM_IME_SETCONTEXT inactive";
@@ -256,6 +317,18 @@ void FlutterWindow::LogFlutterViewMessage(UINT message, WPARAM wparam,
       break;
     case WM_IME_ENDCOMPOSITION:
       event = "WM_IME_ENDCOMPOSITION";
+      break;
+    case WM_IME_CHAR:
+      event = "WM_IME_CHAR";
+      break;
+    case WM_IME_KEYDOWN:
+      event = "WM_IME_KEYDOWN";
+      break;
+    case WM_IME_KEYUP:
+      event = "WM_IME_KEYUP";
+      break;
+    case WM_IME_REQUEST:
+      event = "WM_IME_REQUEST";
       break;
     case WM_IME_NOTIFY:
       if (wparam == IMN_SETOPENSTATUS) {
@@ -276,7 +349,9 @@ void FlutterWindow::LogFlutterViewMessage(UINT message, WPARAM wparam,
   }
   shortcut_channel_->InvokeMethod(
       "imeWindowMessage",
-      std::make_unique<flutter::EncodableValue>(event + " " + CurrentInputState()));
+      std::make_unique<flutter::EncodableValue>(
+          event + " nativeMs=" + std::to_string(CurrentUnixMilliseconds()) +
+          " layout=" + CurrentKeyboardLayoutName()));
 }
 
 LRESULT
@@ -296,6 +371,14 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
             "inputLanguageChanged",
             std::make_unique<flutter::EncodableValue>(
                 CurrentKeyboardLayoutName()));
+      }
+      break;
+    case WM_INPUTLANGCHANGEREQUEST:
+      if (ime_diagnostics_enabled_ && shortcut_channel_) {
+        shortcut_channel_->InvokeMethod(
+            "imeWindowMessage",
+            std::make_unique<flutter::EncodableValue>(
+                "top-level WM_INPUTLANGCHANGEREQUEST"));
       }
       break;
     case WM_ACTIVATE:

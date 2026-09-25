@@ -29,7 +29,7 @@ class FlutterWindow : public Win32Window {
   void ConfigureWindowChromeChannel();
   void ApplyFullscreenChrome();
   void RestoreWindowChrome();
-  std::string CurrentInputState();
+  std::string CurrentInputState(bool include_tsf_profile = false);
   static LRESULT CALLBACK FlutterViewSubclassProc(
       HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam,
       UINT_PTR subclass_id, DWORD_PTR reference_data);

@@ -903,13 +903,20 @@ class MyApp extends StatelessWidget {
       return null;
     }
     if (call.method == "imeWindowMessage") {
-      _logDesktopImeDiagnostic("Flutter view message: ${call.arguments}");
+      final message = call.arguments?.toString() ?? "";
+      if (message.startsWith("WM_INPUTLANGCHANGE")) {
+        _snapshotOnNextEditableKey = true;
+      }
+      _logDesktopImeDiagnostic("Flutter view message: $message");
       return null;
     }
     if (call.method == "inputLanguageSnapshot") {
       _snapshotOnNextEditableKey = true;
       _logDesktopImeDiagnostic(
           "Windows window activated with input layout: ${call.arguments}");
+      Future<void>.delayed(const Duration(milliseconds: 150), () {
+        unawaited(_logDesktopInputState("window activated after 150ms"));
+      });
       return null;
     }
     if (call.method != "shortcutKeyDown") {

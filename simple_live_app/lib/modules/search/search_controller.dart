@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
 import 'package:get/get.dart';
+import 'package:logger/logger.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
+import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/modules/search/search_list_controller.dart';
 
@@ -66,6 +69,7 @@ class AppSearchController extends GetxController
 
   @override
   void onInit() {
+    searchController.addListener(_logImeEditingState);
     for (var site in Sites.supportSites) {
       // if (site.id == Constant.kDouyin) {
       //   Get.put(DouyinSearchController(site));
@@ -78,6 +82,21 @@ class AppSearchController extends GetxController
     }
 
     super.onInit();
+  }
+
+  void _logImeEditingState() {
+    if (!Platform.isWindows ||
+        !AppSettingsController.instance.logEnable.value) {
+      return;
+    }
+    final value = searchController.value;
+    Log.writeLog(
+      "[IME诊断] ${DateTime.now().toIso8601String()} "
+      "Search text length=${value.text.length} "
+      "composing=${value.composing.start}:${value.composing.end} "
+      "selection=${value.selection.start}:${value.selection.end}",
+      Level.debug,
+    );
   }
 
   void doSearch() {
@@ -106,6 +125,7 @@ class AppSearchController extends GetxController
 
   @override
   void onClose() {
+    searchController.removeListener(_logImeEditingState);
     streamSubscription?.cancel();
     super.onClose();
   }
