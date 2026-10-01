@@ -333,35 +333,39 @@ class FollowUserPage extends GetView<FollowUserController> {
                           showPCRefreshButton: false,
                           itemBuilder: (_, i) {
                             final item = controller.list[i];
-                            final isCurrent = "${item.siteId}_${item.roomId}" ==
-                                CurrentRoomService.instance.currentKey;
-                            return FollowUserItem(
-                              item: item,
-                              style: layout.itemStyle,
-                              showLiveCover: AppSettingsController
-                                  .instance.followShowLiveCover.value,
-                              multiSelectMode: controller.multiSelectMode.value,
-                              selectedForMultiRoom:
-                                  controller.isSelectedForMultiRoom(item),
-                              onSpecialTap: () {
-                                controller.toggleSpecialFollow(item);
-                              },
-                              onRemove: () {
-                                controller.removeItem(item);
-                              },
-                              onTap: () {
-                                if (PlatformUtils.supportsInlineMultiRoom &&
-                                    controller.multiSelectMode.value) {
-                                  controller.toggleMultiRoomItem(item);
-                                  return;
-                                }
-                                controller.openFollowRoom(item);
-                              },
-                              onLongPress: () {
-                                setFollowTagDialog(item);
-                              },
-                              playing: isCurrent,
-                            );
+                            // 延迟构建的列表项需要单独监听选择状态。
+                            return Obx(() {
+                              final isCurrent = "${item.siteId}_${item.roomId}" ==
+                                  CurrentRoomService.instance.currentKey;
+                              return FollowUserItem(
+                                item: item,
+                                style: layout.itemStyle,
+                                showLiveCover: AppSettingsController
+                                    .instance.followShowLiveCover.value,
+                                multiSelectMode:
+                                    controller.multiSelectMode.value,
+                                selectedForMultiRoom:
+                                    controller.isSelectedForMultiRoom(item),
+                                onSpecialTap: () {
+                                  controller.toggleSpecialFollow(item);
+                                },
+                                onRemove: () {
+                                  controller.removeItem(item);
+                                },
+                                onTap: () {
+                                  if (PlatformUtils.supportsInlineMultiRoom &&
+                                      controller.multiSelectMode.value) {
+                                    controller.toggleMultiRoomItem(item);
+                                    return;
+                                  }
+                                  controller.openFollowRoom(item);
+                                },
+                                onLongPress: () {
+                                  setFollowTagDialog(item);
+                                },
+                                playing: isCurrent,
+                              );
+                            });
                           },
                         ),
                       );
